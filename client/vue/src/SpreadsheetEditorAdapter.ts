@@ -19,11 +19,15 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
      * @param spreadsheet - The Spreadsheet instance used for collaborative editing.
      * @param serviceUrl - The Collaboration Server URL.
      * @param currentUser - The display name of the current participant.
+     * @param onVersionRestored - The callback invoked when a workbook version is restored.
+     * @param onVersionSaved - The callback invoked when a workbook version is saved.
      */
     public constructor(
         private spreadsheet: Spreadsheet,
         private serviceUrl: string,
-        private currentUser: string
+        private currentUser: string,
+        private onVersionRestored: () => Promise<void>,
+        private onVersionSaved: () => Promise<void>
     ) {
         this.serviceUrl = serviceUrl.endsWith('/')
             ? serviceUrl
@@ -36,7 +40,10 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
      * @param fileName - The name of the workbook to load.
      * @param roomName - The unique collaboration room name.
      */
-    public async loadFromServer(fileName: string, roomName: string): Promise<void> {
+    public async loadFromServer(
+        fileName: string,
+        roomName: string
+    ): Promise<void> {
         const response: Response = await fetch(
             this.serviceUrl + 'api/CollaborativeEditing/ImportFile',
             {
@@ -56,15 +63,16 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
         }
 
         const data: ImportFileResponse = JSON.parse(await response.text());
-
         this.currentRoomName = roomName;
         this.spreadsheet.collaborativeEditingModule.updateRoomInfo(
             roomName,
             data.version,
             this.serviceUrl + 'api/CollaborativeEditing/'
         );
-        this.spreadsheet.collaborativeEditingModule.setLocalUser(this.currentUser);
-        this.spreadsheet.openFromJson({
+        this.spreadsheet.collaborativeEditingModule.setLocalUser(
+            this.currentUser
+        );
+        await this.spreadsheet.openFromJson({
             file: data.sfdt
         });
     }
@@ -76,7 +84,9 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
      */
     public sendActionToServer(action: unknown): void {
         if (action) {
-            this.spreadsheet.collaborativeEditingModule.sendActionToServer(action);
+            this.spreadsheet.collaborativeEditingModule.sendActionToServer(
+                action
+            );
         }
     }
 
@@ -90,11 +100,23 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
         action: string,
         data: ICollaborationActionData
     ): void {
-        if (data) {
-            this.spreadsheet.collaborativeEditingModule.applyRemoteAction(
-                action,
-                data.payload
-            );
+        if (action === 'versionRestored') {
+            void this.onVersionRestored();
+            return;
         }
+
+        if (action === 'versionSaved') {
+            void this.onVersionSaved();
+            return;
+        }
+
+        if (!data) {
+            return;
+        }
+
+        this.spreadsheet.collaborativeEditingModule.applyRemoteAction(
+            action,
+            data.payload
+        );
     }
 }

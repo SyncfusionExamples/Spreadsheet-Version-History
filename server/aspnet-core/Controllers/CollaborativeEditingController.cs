@@ -3,7 +3,10 @@ using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
+using EJ2SpreadsheetServer.Models;
 using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
@@ -19,27 +22,30 @@ using Syncfusion.XlsIO;
 
 namespace EJ2SpreadsheetServer.Controllers
 {
-    /// <summary>
-    /// Provides APIs for Spreadsheet collaborative editing actions and participant selections.
-    /// </summary>
     [Route("api/[controller]")]
     [ApiController]
     public class CollaborativeEditingController : ControllerBase
     {
+        private const string DefaultWorkbookName = "Sample.xlsx";
+        private const string CurrentWorkbookName = "Current.xlsx";
+        private const string VersionMetadataFileName = "versions.json";
+
         private static readonly ConcurrentDictionary<
             string,
             ConcurrentDictionary<string, SpreadsheetSelectionInfo>>
-            RoomSelections = new ConcurrentDictionary<
-                string,
-                ConcurrentDictionary<string, SpreadsheetSelectionInfo>>();
+            RoomSelections =
+                new ConcurrentDictionary<
+                    string,
+                    ConcurrentDictionary<
+                        string,
+                        SpreadsheetSelectionInfo>>();
 
-        private readonly IWebHostEnvironment hostingEnvironment;
-        private readonly IActionService actionService;
-        private readonly ICollaborationAdapter adapter;
-        private readonly IActiveTransport transport;
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim>
+            VersionLocks =
+                new ConcurrentDictionary<string, SemaphoreSlim>();
 
-        private static readonly JsonSerializerSettings ControllerJsonSettings =
-            new JsonSerializerSettings
+        private static readonly JsonSerializerSettings
+            ControllerJsonSettings = new JsonSerializerSettings
             {
                 NullValueHandling = NullValueHandling.Ignore,
                 ContractResolver = new DefaultContractResolver
@@ -48,13 +54,11 @@ namespace EJ2SpreadsheetServer.Controllers
                 }
             };
 
-        /// <summary>
-        /// Initializes a new instance of the <see cref="CollaborativeEditingController"/> class.
-        /// </summary>
-        /// <param name="hostingEnvironment">Provides access to the server hosting environment.</param>
-        /// <param name="actionService">Manages collaborative editing actions and versions.</param>
-        /// <param name="adapter">Maps Spreadsheet actions to and from collaboration actions.</param>
-        /// <param name="transport">Broadcasts collaboration updates to connected participants.</param>
+        private readonly IWebHostEnvironment hostingEnvironment;
+        private readonly IActionService actionService;
+        private readonly ICollaborationAdapter adapter;
+        private readonly IActiveTransport transport;
+
         public CollaborativeEditingController(
             IWebHostEnvironment hostingEnvironment,
             IActionService actionService,
@@ -67,124 +71,66 @@ namespace EJ2SpreadsheetServer.Controllers
             this.transport = transport;
         }
 
-        /// <summary>
-        /// Loads the source workbook, applies pending room actions, and returns the synchronized workbook.
-        /// </summary>
-        /// <param name="param">Contains the workbook name and collaboration room name.</param>
-        /// <returns>The serialized workbook content and current collaboration version.</returns>
         [HttpPost]
         [Route("ImportFile")]
         [EnableCors("AllowAllOrigins")]
-        public async Task<string> ImportFile([FromBody] FileInfo param)
+        public async Task<string> ImportFile(
+            [FromBody] FileInfo param)
         {
-            if (param == null || string.IsNullOrWhiteSpace(param.roomName))
-            {
-                return null;
-            }
-
-            string filePath = Path.Combine(
-                hostingEnvironment.WebRootPath,
-                "Files",
-                "Sample.xlsx"
-            );
-
-            if (!System.IO.File.Exists(filePath))
+            if (param == null ||
+                string.IsNullOrWhiteSpace(param.roomName))
             {
                 return null;
             }
 
             try
             {
-                List<CollaborationAction> collaborationActions =
-                    await actionService.GetPendingOperationsAsync(
-                        param.roomName,
-                        0,
-                        -1
+                MaterializedWorkbook materializedWorkbook =
+                    await MaterializeRoomWorkbookAsync(
+                        param.roomName
                     );
-                List<ActionInfo> spreadsheetActions = collaborationActions == null
-                    ? new List<ActionInfo>()
-                    : collaborationActions
-                        .Select(action =>
-                            adapter.MapGenericToControlAction(action) as ActionInfo
-                        )
-                        .Where(action => action != null)
-                        .OrderBy(action => action.Version)
-                        .ToList();
 
-                using (ExcelEngine temporaryExcelEngine = new ExcelEngine())
+                if (materializedWorkbook == null)
                 {
-                    IApplication application = temporaryExcelEngine.Excel;
-                    IWorkbook temporaryWorkbook = application.Workbooks.Open(filePath);
-
-                    try
-                    {
-                        if (spreadsheetActions.Count > 0)
-                        {
-                            CollaborativeEditingHandler handler =
-                                new CollaborativeEditingHandler(temporaryWorkbook);
-
-                            foreach (ActionInfo action in spreadsheetActions)
-                            {
-                                handler.UpdateAction(action);
-                            }
-                        }
-
-                        using (MemoryStream workbookStream = new MemoryStream())
-                        {
-                            temporaryWorkbook.SaveAs(workbookStream);
-                            workbookStream.Position = 0;
-
-                            string clientFileName = string.IsNullOrWhiteSpace(param.fileName)
-                                ? "Sample"
-                                : param.fileName;
-                            IFormFile formFile = new FormFile(
-                                workbookStream,
-                                0,
-                                workbookStream.Length,
-                                clientFileName,
-                                "Sample.xlsx"
-                            );
-                            OpenRequest openRequest = new OpenRequest
-                            {
-                                File = formFile
-                            };
-                            string workbookJson = Workbook.Open(openRequest);
-                            int currentVersion = spreadsheetActions.Count > 0
-                                ? spreadsheetActions.Max(action => action.Version)
-                                : 0;
-                            DocumentContent content = new DocumentContent
-                            {
-                                sfdt = workbookJson,
-                                version = currentVersion
-                            };
-
-                            return JsonConvert.SerializeObject(content);
-                        }
-                    }
-                    finally
-                    {
-                        temporaryWorkbook.Close();
-                    }
+                    return null;
                 }
+
+                string clientFileName =
+                    string.IsNullOrWhiteSpace(param.fileName)
+                        ? "Sample"
+                        : param.fileName;
+
+                string workbookJson = ConvertWorkbookToJson(
+                    materializedWorkbook.WorkbookData,
+                    clientFileName
+                );
+
+                DocumentContent content = new DocumentContent
+                {
+                    sfdt = workbookJson,
+                    version = materializedWorkbook.Version
+                };
+
+                return JsonConvert.SerializeObject(content);
             }
             catch (Exception exception)
             {
-                Console.WriteLine("Spreadsheet import failed: " + exception);
+                Console.WriteLine(
+                    "Spreadsheet import failed: " +
+                    exception
+                );
                 return null;
             }
         }
 
-        /// <summary>
-        /// Stores a Spreadsheet action and broadcasts the processed action to the collaboration room.
-        /// </summary>
-        /// <param name="param">Contains the Spreadsheet action and collaboration room information.</param>
-        /// <returns>The serialized action after collaboration processing.</returns>
         [HttpPost]
         [Route("UpdateAction")]
         [EnableCors("AllowAllOrigins")]
-        public async Task<string> UpdateAction([FromBody] ActionInfo param)
+        public async Task<string> UpdateAction(
+            [FromBody] ActionInfo param)
         {
-            if (param == null || string.IsNullOrWhiteSpace(param.RoomName))
+            if (param == null ||
+                string.IsNullOrWhiteSpace(param.RoomName))
             {
                 return null;
             }
@@ -192,10 +138,16 @@ namespace EJ2SpreadsheetServer.Controllers
             CollaborationAction collaborationAction =
                 adapter.MapControlToGenericAction(param);
             CollaborationAction modifiedAction =
-                await actionService.AddOperationAsync(collaborationAction, adapter);
-            ActionInfo updatedAction = modifiedAction == null
-                ? null
-                : adapter.MapGenericToControlAction(modifiedAction) as ActionInfo;
+                await actionService.AddOperationAsync(
+                    collaborationAction,
+                    adapter
+                );
+            ActionInfo updatedAction =
+                modifiedAction == null
+                    ? null
+                    : adapter.MapGenericToControlAction(
+                        modifiedAction
+                    ) as ActionInfo;
 
             if (updatedAction == null)
             {
@@ -206,6 +158,7 @@ namespace EJ2SpreadsheetServer.Controllers
                 updatedAction,
                 ControllerJsonSettings
             );
+
             await transport.SendToGroupAsync(
                 param.RoomName,
                 "action",
@@ -215,11 +168,6 @@ namespace EJ2SpreadsheetServer.Controllers
             return payload;
         }
 
-        /// <summary>
-        /// Updates a participant selection and broadcasts it to other users in the room.
-        /// </summary>
-        /// <param name="param">Contains the participant selection and connection details.</param>
-        /// <returns>The updated participant selection.</returns>
         [HttpPost]
         [Route("UpdateSelection")]
         [EnableCors("AllowAllOrigins")]
@@ -236,13 +184,17 @@ namespace EJ2SpreadsheetServer.Controllers
             ConcurrentDictionary<string, SpreadsheetSelectionInfo> selections =
                 RoomSelections.GetOrAdd(
                     param.RoomName,
-                    _ => new ConcurrentDictionary<string, SpreadsheetSelectionInfo>()
+                    _ => new ConcurrentDictionary<
+                        string,
+                        SpreadsheetSelectionInfo>()
                 );
+
             selections.AddOrUpdate(
                 param.ConnectionId,
                 param,
                 (_, _) => param
             );
+
             await transport.SendToGroupExceptAsync(
                 param.RoomName,
                 param.ConnectionId,
@@ -253,21 +205,18 @@ namespace EJ2SpreadsheetServer.Controllers
             return param;
         }
 
-        /// <summary>
-        /// Returns the active participant selections for a collaboration room.
-        /// </summary>
-        /// <param name="roomName">The collaboration room name.</param>
-        /// <returns>The active participant selections in the room.</returns>
         [HttpGet]
         [Route("GetRoomSelections/{roomName}")]
         [EnableCors("AllowAllOrigins")]
-        public ActionResult<List<SpreadsheetSelectionInfo>> GetRoomSelections(
-            string roomName)
+        public ActionResult<List<SpreadsheetSelectionInfo>>
+            GetRoomSelections(string roomName)
         {
             if (string.IsNullOrWhiteSpace(roomName) ||
                 !RoomSelections.TryGetValue(
                     roomName,
-                    out ConcurrentDictionary<string, SpreadsheetSelectionInfo> selections
+                    out ConcurrentDictionary<
+                        string,
+                        SpreadsheetSelectionInfo> selections
                 ))
             {
                 return Ok(new List<SpreadsheetSelectionInfo>());
@@ -276,11 +225,6 @@ namespace EJ2SpreadsheetServer.Controllers
             return Ok(selections.Values.ToList());
         }
 
-        /// <summary>
-        /// Removes a disconnected participant selection from the collaboration room.
-        /// </summary>
-        /// <param name="request">Contains the collaboration room and connection identifiers.</param>
-        /// <returns>An HTTP success result.</returns>
         [HttpPost]
         [Route("RemoveUserSelection")]
         [EnableCors("AllowAllOrigins")]
@@ -296,7 +240,9 @@ namespace EJ2SpreadsheetServer.Controllers
 
             if (RoomSelections.TryGetValue(
                 request.RoomName,
-                out ConcurrentDictionary<string, SpreadsheetSelectionInfo> selections
+                out ConcurrentDictionary<
+                    string,
+                    SpreadsheetSelectionInfo> selections
             ))
             {
                 selections.TryRemove(request.ConnectionId, out _);
@@ -310,18 +256,15 @@ namespace EJ2SpreadsheetServer.Controllers
             return Ok();
         }
 
-        /// <summary>
-        /// Returns collaboration actions newer than the client's last synchronized version.
-        /// </summary>
-        /// <param name="param">Contains the room name and last synchronized version.</param>
-        /// <returns>The serialized list of pending Spreadsheet actions.</returns>
         [HttpPost]
         [Route("GetActionsFromServer")]
         [EnableCors("AllowAllOrigins")]
-        public async Task<ActionResult<List<ActionInfo>>> GetActionsFromServer(
-            [FromBody] ActionInfo param)
+        public async Task<ActionResult<List<ActionInfo>>>
+            GetActionsFromServer(
+                [FromBody] ActionInfo param)
         {
-            if (param == null || string.IsNullOrWhiteSpace(param.RoomName))
+            if (param == null ||
+                string.IsNullOrWhiteSpace(param.RoomName))
             {
                 return Ok(new List<ActionInfo>());
             }
@@ -332,17 +275,21 @@ namespace EJ2SpreadsheetServer.Controllers
                     param.RoomName,
                     lastSyncedVersion
                 );
-            List<ActionInfo> actions = collaborationActions == null
-                ? new List<ActionInfo>()
-                : collaborationActions
-                    .Select(action =>
-                        adapter.MapGenericToControlAction(action) as ActionInfo
-                    )
-                    .Where(action =>
-                        action != null && action.Version > lastSyncedVersion
-                    )
-                    .OrderBy(action => action.Version)
-                    .ToList();
+            List<ActionInfo> actions =
+                collaborationActions == null
+                    ? new List<ActionInfo>()
+                    : collaborationActions
+                        .Select(action =>
+                            adapter.MapGenericToControlAction(
+                                action
+                            ) as ActionInfo
+                        )
+                        .Where(action =>
+                            action != null &&
+                            action.Version > lastSyncedVersion
+                        )
+                        .OrderBy(action => action.Version)
+                        .ToList();
             string payload = JsonConvert.SerializeObject(
                 actions,
                 ControllerJsonSettings
@@ -351,52 +298,539 @@ namespace EJ2SpreadsheetServer.Controllers
             return Ok(payload);
         }
 
-        /// <summary>
-        /// Represents a request to remove a participant selection.
-        /// </summary>
+        [HttpPost]
+        [Route("SaveVersion")]
+        [EnableCors("AllowAllOrigins")]
+        public async Task<IActionResult> SaveVersion(
+            [FromBody] CreateSpreadsheetVersionRequest request)
+        {
+            if (request == null ||
+                string.IsNullOrWhiteSpace(request.RoomName))
+            {
+                return BadRequest("Room name is required.");
+            }
+
+            string roomName = request.RoomName.Trim();
+            SemaphoreSlim versionLock = GetVersionLock(roomName);
+            await versionLock.WaitAsync(); 
+
+            try
+            {
+                MaterializedWorkbook materializedWorkbook =
+                    await MaterializeRoomWorkbookAsync(roomName);
+
+                if (materializedWorkbook == null)
+                {
+                    return NotFound(
+                        "The workbook could not be materialized."
+                    );
+                }
+
+                string versionId = Guid.NewGuid().ToString("N");
+                string roomDirectory =
+                    GetRoomVersionDirectory(roomName);
+                Directory.CreateDirectory(roomDirectory);
+
+                string versionPath = Path.Combine(
+                    roomDirectory,
+                    versionId + ".xlsx"
+                );
+
+                await System.IO.File.WriteAllBytesAsync(
+                    versionPath,
+                    materializedWorkbook.WorkbookData
+                );
+
+                SpreadsheetVersionHistory history =
+                    await ReadVersionHistoryAsync(roomName);
+                SpreadsheetVersionInfo versionInfo =
+                    new SpreadsheetVersionInfo
+                    {
+                        VersionId = versionId,
+                        FileName = string.IsNullOrWhiteSpace(
+                            request.FileName
+                        )
+                            ? DefaultWorkbookName
+                            : request.FileName,
+                        ModifiedBy = string.IsNullOrWhiteSpace(
+                            request.ModifiedBy
+                        )
+                            ? "Guest User"
+                            : request.ModifiedBy,
+                        CreatedAtUtc = DateTime.UtcNow,
+                        CollaborationVersion =
+                            materializedWorkbook.Version
+                    };
+
+                history.Versions.Add(versionInfo);
+                await WriteVersionHistoryAsync(
+                    roomName,
+                    history
+                );
+
+                string versionPayload = JsonConvert.SerializeObject(
+                    versionInfo,
+                    ControllerJsonSettings
+                );
+
+                await transport.SendToGroupAsync(
+                    roomName,
+                    "versionSaved",
+                    versionPayload
+                );
+
+                return Content(
+                    versionPayload,
+                    "application/json",
+                    Encoding.UTF8
+                );
+            }
+            finally
+            {
+                versionLock.Release();
+            }
+        }
+
+[HttpGet]
+[Route("GetVersionHistory/{roomName}")]
+[EnableCors("AllowAllOrigins")]
+public async Task<IActionResult> GetVersionHistory(
+    string roomName)
+{
+    if (string.IsNullOrWhiteSpace(roomName))
+    {
+        return Content(
+            "[]",
+            "application/json",
+            Encoding.UTF8
+        );
+    }
+
+    SpreadsheetVersionHistory history =
+        await ReadVersionHistoryAsync(roomName);
+    List<SpreadsheetVersionInfo> versions =
+        history.Versions
+            .OrderByDescending(
+                version => version.CreatedAtUtc
+            )
+            .ToList();
+    string response = JsonConvert.SerializeObject(
+        versions,
+        ControllerJsonSettings
+    );
+
+    return Content(
+        response,
+        "application/json",
+        Encoding.UTF8
+    );
+}
+
+        [HttpPost]
+        [Route("GetVersionWorkbook")]
+        [EnableCors("AllowAllOrigins")]
+        public async Task<ActionResult<DocumentContent>>
+            GetVersionWorkbook(
+                [FromBody] SpreadsheetVersionRequest request)
+        {
+            if (request == null ||
+                string.IsNullOrWhiteSpace(request.RoomName) ||
+                string.IsNullOrWhiteSpace(request.VersionId))
+            {
+                return BadRequest(
+                    "Room name and version ID are required."
+                );
+            }
+
+            string versionPath = GetVersionWorkbookPath(
+                request.RoomName,
+                request.VersionId
+            );
+
+            if (!System.IO.File.Exists(versionPath))
+            {
+                return NotFound(
+                    "The requested version does not exist."
+                );
+            }
+
+            byte[] workbookData =
+                await System.IO.File.ReadAllBytesAsync(versionPath);
+            SpreadsheetVersionInfo versionInfo =
+                await GetVersionInfoAsync(
+                    request.RoomName,
+                    request.VersionId
+                );
+            string workbookJson = ConvertWorkbookToJson(
+                workbookData,
+                versionInfo?.FileName ?? DefaultWorkbookName
+            );
+
+            return Ok(new DocumentContent
+            {
+                sfdt = workbookJson,
+                version = versionInfo?.CollaborationVersion ?? 0
+            });
+        }
+
+        [HttpPost]
+        [Route("RestoreVersion")]
+        [EnableCors("AllowAllOrigins")]
+        public async Task<ActionResult> RestoreVersion(
+            [FromBody] SpreadsheetVersionRequest request)
+        {
+            if (request == null ||
+                string.IsNullOrWhiteSpace(request.RoomName) ||
+                string.IsNullOrWhiteSpace(request.VersionId))
+            {
+                return BadRequest(
+                    "Room name and version ID are required."
+                );
+            }
+
+            string roomName = request.RoomName.Trim();
+            string versionPath = GetVersionWorkbookPath(
+                roomName,
+                request.VersionId
+            );
+
+            if (!System.IO.File.Exists(versionPath))
+            {
+                return NotFound(
+                    "The requested version does not exist."
+                );
+            }
+
+            SemaphoreSlim versionLock = GetVersionLock(roomName);
+            await versionLock.WaitAsync();
+
+            try
+            {
+                string roomDirectory =
+                    GetRoomVersionDirectory(roomName);
+                Directory.CreateDirectory(roomDirectory);
+
+                string currentWorkbookPath = Path.Combine(
+                    roomDirectory,
+                    CurrentWorkbookName
+                );
+
+                System.IO.File.Copy(
+                    versionPath,
+                    currentWorkbookPath,
+                    true
+                );
+
+                await actionService.ClearRecordsAsync(
+                    roomName,
+                    false
+                );
+
+                string payload = JsonConvert.SerializeObject(
+                    new
+                    {
+                        roomName,
+                        versionId = request.VersionId
+                    },
+                    ControllerJsonSettings
+                );
+
+                await transport.SendToGroupAsync(
+                    roomName,
+                    "versionRestored",
+                    payload
+                );
+
+                return Ok();
+            }
+            finally
+            {
+                versionLock.Release();
+            }
+        }
+
+        private async Task<MaterializedWorkbook>
+            MaterializeRoomWorkbookAsync(string roomName)
+        {
+            string workbookPath =
+                GetRoomBaselineWorkbookPath(roomName);
+
+            if (!System.IO.File.Exists(workbookPath))
+            {
+                return null;
+            }
+
+            List<CollaborationAction> collaborationActions =
+                await actionService.GetPendingOperationsAsync(
+                    roomName,
+                    0,
+                    -1
+                );
+            List<ActionInfo> spreadsheetActions =
+                collaborationActions == null
+                    ? new List<ActionInfo>()
+                    : collaborationActions
+                        .Select(action =>
+                            adapter.MapGenericToControlAction(
+                                action
+                            ) as ActionInfo
+                        )
+                        .Where(action => action != null)
+                        .OrderBy(action => action.Version)
+                        .ToList();
+
+            using (ExcelEngine excelEngine = new ExcelEngine())
+            {
+                IApplication application = excelEngine.Excel;
+                IWorkbook workbook =
+                    application.Workbooks.Open(workbookPath);
+
+                try
+                {
+                    if (spreadsheetActions.Count > 0)
+                    {
+                        CollaborativeEditingHandler handler =
+                            new CollaborativeEditingHandler(
+                                workbook
+                            );
+
+                        foreach (ActionInfo action in spreadsheetActions)
+                        {
+                            handler.UpdateAction(action);
+                        }
+                    }
+
+                    using (MemoryStream workbookStream =
+                        new MemoryStream())
+                    {
+                        workbook.SaveAs(workbookStream);
+
+                        return new MaterializedWorkbook
+                        {
+                            WorkbookData = workbookStream.ToArray(),
+                            Version = spreadsheetActions.Count > 0
+                                ? spreadsheetActions.Max(
+                                    action => action.Version
+                                )
+                                : 0
+                        };
+                    }
+                }
+                finally
+                {
+                    workbook.Close();
+                }
+            }
+        }
+
+        private string ConvertWorkbookToJson(
+            byte[] workbookData,
+            string fileName)
+        {
+            using (MemoryStream workbookStream =
+                new MemoryStream(workbookData))
+            {
+                string uploadFileName =
+                    fileName.EndsWith(
+                        ".xlsx",
+                        StringComparison.OrdinalIgnoreCase
+                    )
+                        ? fileName
+                        : fileName + ".xlsx";
+                IFormFile formFile = new FormFile(
+                    workbookStream,
+                    0,
+                    workbookStream.Length,
+                    uploadFileName,
+                    uploadFileName
+                );
+                OpenRequest openRequest = new OpenRequest
+                {
+                    File = formFile
+                };
+
+                return Workbook.Open(openRequest);
+            }
+        }
+
+        private string GetRoomBaselineWorkbookPath(string roomName)
+        {
+            string currentWorkbookPath = Path.Combine(
+                GetRoomVersionDirectory(roomName),
+                CurrentWorkbookName
+            );
+
+            if (System.IO.File.Exists(currentWorkbookPath))
+            {
+                return currentWorkbookPath;
+            }
+
+            return Path.Combine(
+                hostingEnvironment.WebRootPath,
+                "Files",
+                DefaultWorkbookName
+            );
+        }
+
+        private string GetRoomVersionDirectory(string roomName)
+        {
+            return Path.Combine(
+                hostingEnvironment.ContentRootPath,
+                "VersionData",
+                SanitizePathSegment(roomName)
+            );
+        }
+
+        private string GetVersionWorkbookPath(
+            string roomName,
+            string versionId)
+        {
+            return Path.Combine(
+                GetRoomVersionDirectory(roomName),
+                SanitizePathSegment(versionId) + ".xlsx"
+            );
+        }
+
+        private async Task<SpreadsheetVersionHistory>
+            ReadVersionHistoryAsync(string roomName)
+        {
+            string metadataPath = Path.Combine(
+                GetRoomVersionDirectory(roomName),
+                VersionMetadataFileName
+            );
+
+            if (!System.IO.File.Exists(metadataPath))
+            {
+                return new SpreadsheetVersionHistory();
+            }
+
+            string json = await System.IO.File.ReadAllTextAsync(
+                metadataPath,
+                Encoding.UTF8
+            );
+
+            if (string.IsNullOrWhiteSpace(json))
+            {
+                return new SpreadsheetVersionHistory();
+            }
+
+            return JsonConvert.DeserializeObject<
+                SpreadsheetVersionHistory>(json) ??
+                new SpreadsheetVersionHistory();
+        }
+
+        private async Task WriteVersionHistoryAsync(
+            string roomName,
+            SpreadsheetVersionHistory history)
+        {
+            string roomDirectory =
+                GetRoomVersionDirectory(roomName);
+            Directory.CreateDirectory(roomDirectory);
+
+            string metadataPath = Path.Combine(
+                roomDirectory,
+                VersionMetadataFileName
+            );
+            string temporaryPath = metadataPath + ".tmp";
+            string json = JsonConvert.SerializeObject(
+                history,
+                Formatting.Indented,
+                ControllerJsonSettings
+            );
+
+            await System.IO.File.WriteAllTextAsync(
+                temporaryPath,
+                json,
+                Encoding.UTF8
+            );
+
+            if (System.IO.File.Exists(metadataPath))
+            {
+                System.IO.File.Delete(metadataPath);
+            }
+
+            System.IO.File.Move(
+                temporaryPath,
+                metadataPath
+            );
+        }
+
+        private async Task<SpreadsheetVersionInfo>
+            GetVersionInfoAsync(
+                string roomName,
+                string versionId)
+        {
+            SpreadsheetVersionHistory history =
+                await ReadVersionHistoryAsync(roomName);
+
+            return history.Versions.FirstOrDefault(
+                version => string.Equals(
+                    version.VersionId,
+                    versionId,
+                    StringComparison.Ordinal
+                )
+            );
+        }
+
+        private static SemaphoreSlim GetVersionLock(
+            string roomName)
+        {
+            return VersionLocks.GetOrAdd(
+                roomName,
+                _ => new SemaphoreSlim(1, 1)
+            );
+        }
+
+        private static string SanitizePathSegment(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return "default";
+            }
+
+            char[] invalidCharacters =
+                Path.GetInvalidFileNameChars();
+            string sanitizedValue = new string(
+                value
+                    .Where(character =>
+                        !invalidCharacters.Contains(character) &&
+                        character != Path.DirectorySeparatorChar &&
+                        character != Path.AltDirectorySeparatorChar
+                    )
+                    .ToArray()
+            );
+
+            return string.IsNullOrWhiteSpace(sanitizedValue)
+                ? "default"
+                : sanitizedValue;
+        }
+
         public class RemoveSelectionRequest
         {
-            /// <summary>
-            /// Gets or sets the collaboration room name.
-            /// </summary>
             public string RoomName { get; set; }
 
-            /// <summary>
-            /// Gets or sets the participant connection identifier.
-            /// </summary>
             public string ConnectionId { get; set; }
         }
 
-        /// <summary>
-        /// Represents the synchronized workbook content and collaboration version.
-        /// </summary>
         public class DocumentContent
         {
-            /// <summary>
-            /// Gets or sets the current collaboration version.
-            /// </summary>
             public int version { get; set; }
 
-            /// <summary>
-            /// Gets or sets the serialized workbook content.
-            /// </summary>
             public string sfdt { get; set; }
         }
 
-        /// <summary>
-        /// Represents a workbook import request.
-        /// </summary>
         public class FileInfo
         {
-            /// <summary>
-            /// Gets or sets the workbook file name.
-            /// </summary>
             public string fileName { get; set; }
 
-            /// <summary>
-            /// Gets or sets the collaboration room name.
-            /// </summary>
             public string roomName { get; set; }
+        }
+
+        private class MaterializedWorkbook
+        {
+            public byte[] WorkbookData { get; set; }
+
+            public int Version { get; set; }
         }
     }
 }
