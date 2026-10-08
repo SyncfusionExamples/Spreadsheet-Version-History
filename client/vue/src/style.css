@@ -5,23 +5,52 @@ body,
 #app {
     width: 100%;
     height: 100%;
-    min-width: 0;
-    min-height: 0;
     margin: 0;
-    padding: 0;
     overflow: hidden;
 }
 
 body {
-    position: fixed;
-    inset: 0;
-    display: block;
+    min-width: 0;
+    min-height: 0;
 }
 
-#app {
-    display: block;
-    max-width: none;
-    text-align: initial;
+.collaborative-sample {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+}
+
+.workspace-container {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    overflow: hidden;
+}
+
+.spreadsheet-container {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.spreadsheet-container .e-spreadsheet {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+}
+
+.version-history-panel {
+    flex: 0 0 320px;
+    width: 320px;
+    min-height: 0;
+    overflow-y: auto;
 }
 
 .collaborative-sample,
@@ -33,9 +62,7 @@ body {
     display: flex;
     flex-direction: column;
     width: 100%;
-    height: 100%;
-    min-width: 0;
-    min-height: 0;
+    height: 100vh;
     margin: 0;
     overflow: hidden;
     color: #242424;
@@ -140,32 +167,23 @@ body {
 
 .workspace-container {
     display: flex;
-    flex: 1 1 0;
-    width: 100%;
-    min-width: 0;
+    flex: 1 1 auto;
     min-height: 0;
-    overflow: hidden;
+    width: 100%;
 }
 
 .spreadsheet-container {
     position: relative;
-    display: flex;
-    flex: 1 1 0;
-    width: 0;
+    flex: 1 1 auto;
     min-width: 0;
     min-height: 0;
     overflow: hidden;
 }
 
-.spreadsheet-container > .e-spreadsheet,
 .spreadsheet-container .e-spreadsheet {
-    flex: 1 1 auto;
     width: 100% !important;
     height: 100% !important;
-    min-width: 0;
-    min-height: 0;
-    max-width: none !important;
-    max-height: none !important;
+    max-width: 100% !important;
 }
 
 .version-history-mode .e-spreadsheet .e-ribbon {
@@ -186,7 +204,6 @@ body {
 .version-history-panel {
     flex: 0 0 320px;
     width: 320px;
-    min-height: 0;
     overflow-y: auto;
     border-left: 1px solid #d6d6d6;
     background: #ffffff;
@@ -304,28 +321,24 @@ body {
     white-space: nowrap;
 }
 
-.restore-version-dialog .e-dlg-content,
-.remote-restore-dialog .e-dlg-content {
+.restore-version-dialog .e-dlg-content {
     padding: 20px 24px 16px;
 }
 
-.restore-dialog-content,
-.remote-restore-content {
+.restore-dialog-content {
     display: flex;
     flex-direction: column;
     gap: 24px;
 }
 
-.restore-dialog-message,
-.remote-restore-message {
+.restore-dialog-message {
     margin: 0;
     color: #424242;
     font-size: 14px;
     line-height: 22px;
 }
 
-.restore-dialog-actions,
-.remote-restore-actions {
+.restore-dialog-actions {
     display: flex;
     align-items: center;
     justify-content: flex-end;
@@ -341,8 +354,37 @@ body {
     color: #107c41;
 }
 
+.remote-restore-dialog .e-dlg-content {
+    padding: 20px 24px 16px;
+}
+
+.remote-restore-content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.remote-restore-message {
+    color: #424242;
+    font-size: 14px;
+    line-height: 22px;
+}
+
+.remote-restore-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
 .remote-restore-actions .e-btn {
     min-width: 120px;
+}
+
+.version-history-mode .e-spreadsheet .e-active-cell,
+.version-history-mode .e-spreadsheet .e-autofill,
+.version-history-mode .e-spreadsheet .e-collaborative-active-cell {
+    display: none !important;
 }
 
 @media (max-width: 800px) {
@@ -368,10 +410,6 @@ body {
 
     .workspace-container {
         flex-direction: column;
-    }
-
-    .spreadsheet-container {
-        width: 100%;
     }
 
     .version-history-panel {
