@@ -13,20 +13,20 @@ interface ImportFileResponse {
 export class SpreadsheetEditorAdapter implements ICollaborationProvider {
     public currentRoomName: string = '';
 
+    private isVersionHistoryMode: boolean = false;
+
     /**
      * Initializes a new instance of the Spreadsheet collaboration adapter.
      *
      * @param spreadsheet - The Spreadsheet instance used for collaborative editing.
      * @param serviceUrl - The Collaboration Server URL.
      * @param currentUser - The display name of the current participant.
-     * @param onVersionRestored - The callback invoked when a workbook version is restored.
-     * @param onVersionSaved - The callback invoked when a workbook version is saved.
+     * @param onVersionSaved - The callback invoked when a version is saved.
      */
     public constructor(
         private spreadsheet: Spreadsheet,
         private serviceUrl: string,
         private currentUser: string,
-        private onVersionRestored: () => Promise<void>,
         private onVersionSaved: () => Promise<void>
     ) {
         this.serviceUrl = serviceUrl.endsWith('/')
@@ -77,31 +77,56 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
         });
     }
 
-    /**
-     * Sends a completed local Spreadsheet action to the Collaboration Server.
-     *
-     * @param action - The completed Spreadsheet action.
-     */
+    /** Sends a completed local Spreadsheet action to the Collaboration Server. */
     public sendActionToServer(action: unknown): void {
-        if (action) {
-            this.spreadsheet.collaborativeEditingModule.sendActionToServer(
-                action
-            );
+        if (!action || !this.currentRoomName) {
+            return;
         }
+
+        void this.registerUserAndSendAction(action);
     }
 
-    /**
-     * Applies an action received from another participant to the Spreadsheet.
-     *
-     * @param action - The collaborative action name.
-     * @param data - The collaborative action data received from the server.
-     */
+    /** Registers the participant before sending the Spreadsheet action. */
+    private async registerUserAndSendAction(
+        action: unknown
+    ): Promise<void> {
+        const response: Response = await fetch(
+            this.serviceUrl +
+                'api/CollaborativeEditing/RegisterActionUser',
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    roomName: this.currentRoomName,
+                    currentUser: this.currentUser
+                })
+            }
+        );
+
+        if (!response.ok) {
+            console.error(
+                '[Version History] Failed to register the action user.'
+            );
+        }
+        
+        this.spreadsheet.collaborativeEditingModule.sendActionToServer(
+            action
+        );
+    }
+
+    /** Enables or disables historical-preview isolation. */
+    public setVersionHistoryMode(enabled: boolean): void {
+        this.isVersionHistoryMode = enabled;
+    }
+
+    /** Applies an action received from another participant. */
     public applyRemoteAction(
         action: string,
         data: ICollaborationActionData
     ): void {
         if (action === 'versionRestored') {
-            void this.onVersionRestored();
             return;
         }
 
@@ -110,7 +135,7 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
             return;
         }
 
-        if (!data) {
+        if (this.isVersionHistoryMode || !data) {
             return;
         }
 

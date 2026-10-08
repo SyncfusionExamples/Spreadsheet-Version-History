@@ -110,8 +110,15 @@ body,
     font-weight: 600;
 }
 
-.version-preview-bar .e-btn {
+.version-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     justify-self: end;
+}
+
+.version-preview-bar .e-btn {
+    margin-left: 0 !important;
 }
 
 .workspace-container {
@@ -133,6 +140,10 @@ body,
     width: 100% !important;
     height: 100% !important;
     max-width: 100% !important;
+}
+
+.version-history-mode .e-spreadsheet .e-ribbon {
+    display: none !important;
 }
 
 .version-preview-loading {
@@ -264,6 +275,66 @@ body,
     min-width: 106px;
     padding: 0 12px !important;
     white-space: nowrap;
+}
+
+.restore-version-dialog .e-dlg-content {
+    padding: 20px 24px 16px;
+}
+
+.restore-dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.restore-dialog-message {
+    margin: 0;
+    color: #424242;
+    font-size: 14px;
+    line-height: 22px;
+}
+
+.restore-dialog-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    width: 100%;
+}
+
+.restore-dialog-actions .e-btn {
+    min-width: 100px;
+}
+
+.remote-restore-dialog .e-dlg-header {
+    color: #107c41;
+}
+
+.remote-restore-dialog .e-dlg-content {
+    padding: 20px 24px 16px;
+}
+
+.remote-restore-content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.remote-restore-message {
+    color: #424242;
+    font-size: 14px;
+    line-height: 22px;
+}
+
+.remote-restore-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.remote-restore-actions .e-btn {
+    min-width: 120px;
 }
 
 @media (max-width: 800px) {
