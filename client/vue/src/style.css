@@ -110,8 +110,15 @@ body,
     font-weight: 600;
 }
 
-.version-preview-bar .e-btn {
+.version-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
     justify-self: end;
+}
+
+.version-preview-bar .e-btn {
+    margin-left: 0 !important;
 }
 
 .workspace-container {
@@ -133,6 +140,14 @@ body,
     width: 100% !important;
     height: 100% !important;
     max-width: 100% !important;
+}
+
+.version-history-mode .e-spreadsheet .e-ribbon {
+    display: none !important;
+}
+
+.version-history-mode .e-spreadsheet .e-sheet-tabs {
+    display: none !important;
 }
 
 .version-preview-loading {

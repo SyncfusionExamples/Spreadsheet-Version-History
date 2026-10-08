@@ -33,6 +33,7 @@ interface VersionWorkbookResponse {
 }
 
 const serviceUrl: string = 'https://localhost:7002/';
+
 const userNames: string[] = [
     'James Carter', 'Olivia Bennett', 'William Parker', 'Emma Collins',
     'Henry Mitchell', 'Amelia Foster', 'Benjamin Turner', 'Charlotte Morgan',
@@ -64,6 +65,7 @@ const isVersionHistoryMode = ref<boolean>(false);
 const isViewingVersion = ref<boolean>(false);
 const savingVersion = ref<boolean>(false);
 const restoringVersion = ref<boolean>(false);
+const downloadingVersion = ref<boolean>(false);
 const currentUser: string =
     userNames[Math.floor(Math.random() * userNames.length)] ?? 'John Sullivan';
 
@@ -336,6 +338,14 @@ async function enterVersionHistoryMode(): Promise<void> {
     if (spreadsheet) {
         spreadsheet.allowEditing = false;
         spreadsheet.dataBind();
+        
+        // Hide formula bar for read-only mode
+        try {
+            spreadsheet.showFormulaBar = false;
+            spreadsheet.dataBind();
+        } catch (error) {
+            console.warn('[Version History] Could not hide formula bar:', error);
+        }
     }
 
     await loadVersionHistory();
@@ -420,24 +430,49 @@ async function openVersionPreview(
         );
 
         if (!response.ok) {
-            throw new Error(
-                'GetVersionWorkbook failed: ' + response.status
-            );
+            const errorMessage = response.status === 404
+                ? 'The selected version is no longer available.'
+                : `Failed to load version with status ${response.status}.`;
+            throw new Error(errorMessage);
         }
 
         const data: VersionWorkbookResponse =
             await response.json() as VersionWorkbookResponse;
 
+        if (!data.sfdt) {
+            throw new Error('Received invalid workbook data.');
+        }
+
         await spreadsheet.openFromJson({
             file: data.sfdt
         });
+        
         isViewingVersion.value = true;
         spreadsheet.allowEditing = false;
         spreadsheet.dataBind();
+        
+        // Make all cells read-only to prevent any editing
+        // Get the active sheet and make all used range read-only
+        setTimeout(() => {
+            try {
+                const activeSheetIndex = spreadsheet.activeSheetIndex;
+                
+                // Make entire sheet read-only to prevent any editing
+                spreadsheet.setRangeReadOnly(true, 'A1:XFD1048576', activeSheetIndex);
+                
+                // Hide formula bar for read-only mode
+                spreadsheet.showFormulaBar = false;
+                spreadsheet.dataBind();
+            } catch (error) {
+                console.warn('[Version History] Could not apply read-only settings:', error);
+            }
+        }, 100);
     } catch (error) {
         selectedVersionId.value = '';
         selectedVersion.value = null;
         console.error('[Version History] Failed to preview the version.', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unable to load version. Please try again.';
+        window.alert(errorMsg);
     } finally {
         suppressLocalActions = false;
         versionPreviewLoading.value = false;
@@ -461,6 +496,14 @@ async function backToDocument(): Promise<void> {
         if (spreadsheet) {
             spreadsheet.allowEditing = true;
             spreadsheet.dataBind();
+            
+            // Restore formula bar when returning to editing
+            try {
+                spreadsheet.showFormulaBar = true;
+                spreadsheet.dataBind();
+            } catch (error) {
+                console.warn('[Version History] Could not restore formula bar:', error);
+            }
         }
 
         isVersionHistoryMode.value = false;
@@ -479,7 +522,18 @@ async function backToDocument(): Promise<void> {
 async function restoreSelectedVersion(): Promise<void> {
     if (!adapter?.currentRoomName ||
         !selectedVersionId.value ||
+        !selectedVersion.value ||
         restoringVersion.value) {
+        return;
+    }
+
+    // Request confirmation before restoring
+    const versionDate = formatVersionDate(selectedVersion.value.createdAtUtc);
+    const confirmed = window.confirm(
+        `Are you sure you want to restore this version from ${versionDate}?\n\nThis will create a new version with the content from the selected timestamp.`
+    );
+
+    if (!confirmed) {
         return;
     }
 
@@ -509,8 +563,65 @@ async function restoreSelectedVersion(): Promise<void> {
         await reloadLatestWorkbook();
     } catch (error) {
         console.error('[Version History] Failed to restore the version.', error);
+        window.alert('Failed to restore version. Please try again.');
     } finally {
         restoringVersion.value = false;
+    }
+}
+
+/** Downloads the selected version as an XLSX file. */
+async function downloadSelectedVersion(): Promise<void> {
+    if (!adapter?.currentRoomName ||
+        !selectedVersionId.value ||
+        !selectedVersion.value ||
+        downloadingVersion.value) {
+        return;
+    }
+
+    downloadingVersion.value = true;
+
+    try {
+        const response: Response = await fetch(
+            serviceUrl + 'api/CollaborativeEditing/DownloadVersion',
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    roomName: adapter.currentRoomName,
+                    versionId: selectedVersionId.value
+                })
+            }
+        );
+
+        if (!response.ok) {
+            const errorMessage = response.status === 404
+                ? 'The selected version is no longer available.'
+                : `Download failed with status ${response.status}. Please try again.`;
+            throw new Error(errorMessage);
+        }
+
+        const blob: Blob = await response.blob();
+
+        if (blob.size === 0) {
+            throw new Error('Downloaded file is empty. Please try again.');
+        }
+
+        const url: string = window.URL.createObjectURL(blob);
+        const link: HTMLAnchorElement = document.createElement('a');
+        link.href = url;
+        link.download = `${selectedVersion.value.fileName.replace('.xlsx', '')}_v${selectedVersion.value.collaborationVersion}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+    } catch (error) {
+        console.error('[Version History] Failed to download the version.', error);
+        const errorMsg = error instanceof Error ? error.message : 'Unable to download version. Please try again.';
+        window.alert(errorMsg);
+    } finally {
+        downloadingVersion.value = false;
     }
 }
 
@@ -543,6 +654,14 @@ async function reloadLatestWorkbook(): Promise<void> {
         if (spreadsheet) {
             spreadsheet.allowEditing = true;
             spreadsheet.dataBind();
+            
+            // Restore formula bar after restore completes
+            try {
+                spreadsheet.showFormulaBar = true;
+                spreadsheet.dataBind();
+            } catch (error) {
+                console.warn('[Version History] Could not restore formula bar after restore:', error);
+            }
         }
 
         isVersionHistoryMode.value = false;
@@ -675,19 +794,33 @@ onBeforeUnmount(() => {
                         : 'Current version'
                 }}
             </span>
-            <button
-                v-if="isViewingVersion"
-                type="button"
-                class="e-btn e-primary"
-                :disabled="restoringVersion"
-                @click="restoreSelectedVersion"
-            >
-                {{ restoringVersion ? 'Restoring...' : 'Restore' }}
-            </button>
-            <span v-else></span>
+            <div class="version-preview-actions">
+                <button
+                    v-if="isViewingVersion"
+                    type="button"
+                    class="e-btn"
+                    :disabled="downloadingVersion"
+                    @click="downloadSelectedVersion"
+                    title="Download this version as an Excel file"
+                >
+                    {{ downloadingVersion ? 'Downloading...' : 'Download' }}
+                </button>
+                <button
+                    v-if="isViewingVersion"
+                    type="button"
+                    class="e-btn e-primary"
+                    :disabled="restoringVersion"
+                    @click="restoreSelectedVersion"
+                >
+                    {{ restoringVersion ? 'Restoring...' : 'Restore' }}
+                </button>
+            </div>
         </div>
         <div class="workspace-container">
-            <div class="spreadsheet-container">
+            <div
+                class="spreadsheet-container"
+                :class="{ 'version-history-mode': isVersionHistoryMode }"
+            >
                 <!-- Enables collaborative editing and read-only Version History mode. -->
                 <ejs-spreadsheet
                     ref="spreadsheetRef"

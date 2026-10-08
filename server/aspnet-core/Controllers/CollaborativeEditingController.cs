@@ -549,6 +549,135 @@ public async Task<IActionResult> GetVersionHistory(
             }
         }
 
+        /// <summary>
+        /// Downloads a specific version of the workbook as an XLSX file.
+        /// </summary>
+        /// <param name="request">The version request containing room name and version ID.</param>
+        /// <returns>The workbook file as an attachment.</returns>
+        [HttpPost]
+        [Route("DownloadVersion")]
+        [EnableCors("AllowAllOrigins")]
+        public async Task<ActionResult> DownloadVersion(
+            [FromBody] SpreadsheetVersionRequest request)
+        {
+            if (request == null ||
+                string.IsNullOrWhiteSpace(request.RoomName) ||
+                string.IsNullOrWhiteSpace(request.VersionId))
+            {
+                return BadRequest(
+                    "Room name and version ID are required."
+                );
+            }
+
+            string roomName = request.RoomName.Trim();
+            string versionPath = GetVersionWorkbookPath(
+                roomName,
+                request.VersionId
+            );
+
+            if (!System.IO.File.Exists(versionPath))
+            {
+                return NotFound(
+                    "The requested version does not exist."
+                );
+            }
+
+            try
+            {
+                byte[] fileBytes = await System.IO.File.ReadAllBytesAsync(
+                    versionPath
+                );
+
+                // Get version metadata for filename generation
+                SpreadsheetVersionInfo versionInfo =
+                    await GetVersionInfoAsync(
+                        roomName,
+                        request.VersionId
+                    );
+
+                string fileName = GenerateDownloadFileName(
+                    versionInfo,
+                    request.VersionId
+                );
+
+                return File(
+                    fileBytes,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    fileName
+                );
+            }
+            catch (Exception exception)
+            {
+                Console.WriteLine(
+                    "Version download failed: " +
+                    exception
+                );
+                return StatusCode(
+                    500,
+                    "Unable to download version."
+                );
+            }
+        }
+
+        /// <summary>
+        /// Generates a meaningful filename for a downloaded version.
+        /// </summary>
+        /// <param name="versionInfo">The version metadata.</param>
+        /// <param name="versionId">The version ID.</param>
+        /// <returns>A formatted filename.</returns>
+        private string GenerateDownloadFileName(
+            SpreadsheetVersionInfo versionInfo,
+            string versionId)
+        {
+            if (versionInfo == null)
+            {
+                return string.Format(
+                    "Workbook_v{0}_{1:yyyy-MM-dd_HH-mm-ss}.xlsx",
+                    versionId.Substring(0, Math.Min(8, versionId.Length)),
+                    DateTime.UtcNow
+                );
+            }
+
+            string baseFileName = string.IsNullOrWhiteSpace(
+                versionInfo.FileName
+            )
+                ? "Workbook"
+                : System.IO.Path.GetFileNameWithoutExtension(
+                    versionInfo.FileName
+                );
+
+            return string.Format(
+                "{0}_v{1}_{2:yyyy-MM-dd_HH-mm-ss}.xlsx",
+                SanitizeFileName(baseFileName),
+                versionInfo.CollaborationVersion,
+                versionInfo.CreatedAtUtc
+            );
+        }
+
+        /// <summary>
+        /// Sanitizes a filename by removing invalid characters.
+        /// </summary>
+        /// <param name="fileName">The filename to sanitize.</param>
+        /// <returns>A sanitized filename.</returns>
+        private string SanitizeFileName(string fileName)
+        {
+            if (string.IsNullOrWhiteSpace(fileName))
+            {
+                return "Workbook";
+            }
+
+            char[] invalidCharacters =
+                System.IO.Path.GetInvalidFileNameChars();
+
+            return new string(
+                fileName
+                    .Where(character =>
+                        !invalidCharacters.Contains(character)
+                    )
+                    .ToArray()
+            );
+        }
+
         private async Task<MaterializedWorkbook>
             MaterializeRoomWorkbookAsync(string roomName)
         {
