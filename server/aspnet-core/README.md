@@ -90,6 +90,10 @@ Restore the required packages:
 dotnet restore
 ```
 
+```bash
+dotnet build
+```
+
 Run the server:
 
 ```bash

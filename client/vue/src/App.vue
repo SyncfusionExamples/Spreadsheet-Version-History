@@ -897,7 +897,6 @@ onBeforeUnmount(() => {
                 <ejs-spreadsheet
                     ref="spreadsheetRef"
                     width="100%"
-                    height="100%"
                     :enableCollaborativeEditing="true"
                     :allowEditing="!isVersionHistoryMode"
                     :created="onCreated"
