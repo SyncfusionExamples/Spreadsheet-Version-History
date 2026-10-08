@@ -1,0 +1,163 @@
+@import '@syncfusion/ej2-tailwind3-theme/styles/tailwind3.css';
+
+html,
+body,
+#app {
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    overflow-x: hidden;
+}
+
+.collaborative-sample,
+.collaborative-sample * {
+    box-sizing: border-box;
+}
+
+.collaborative-sample {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+    color: #242424;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont,
+        "Helvetica Neue", Arial, sans-serif;
+}
+
+.collaboration-info-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    height: 50px;
+    min-height: 50px;
+    max-height: 50px;
+    margin: 0;
+    padding: 6px 12px;
+    border: 1px solid #d6d6d6;
+    border-bottom: 0;
+    background-color: #f8f9fa;
+}
+
+.collaboration-info-text {
+    min-width: 0;
+    margin: 0;
+    padding-right: 16px;
+    overflow: hidden;
+    color: #424242;
+    font-family: inherit;
+    font-size: 14px;
+    font-weight: 400;
+    line-height: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.share-tooltip-host {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 auto;
+    height: 36px;
+}
+
+.share-button.e-btn,
+.copy-url-button.e-btn {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    height: 36px;
+    font-family: inherit;
+    line-height: normal !important;
+}
+
+.share-button.e-btn {
+    min-width: 88px;
+    margin: 0;
+    padding: 0 16px !important;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.spreadsheet-container {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    overflow: hidden;
+}
+
+.spreadsheet-container .e-spreadsheet {
+    width: 100% !important;
+    max-width: 100% !important;
+}
+
+.collaboration-share-tooltip.e-tooltip-wrap {
+    max-width: none;
+    font-family: "Segoe UI", -apple-system, BlinkMacSystemFont,
+        "Helvetica Neue", Arial, sans-serif;
+}
+
+.collaboration-share-tooltip .e-tip-content {
+    padding: 12px;
+}
+
+.share-tooltip-content {
+    width: 420px;
+    max-width: calc(100vw - 48px);
+}
+
+.share-url-label {
+    display: block;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+}
+
+.share-url-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+}
+
+.share-url-input {
+    flex: 1 1 auto;
+    min-width: 0;
+    height: 36px;
+    font-family: inherit;
+    font-size: 13px;
+}
+
+.copy-url-button.e-btn {
+    flex: 0 0 auto;
+    min-width: 106px;
+    padding: 0 12px !important;
+    white-space: nowrap;
+}
+
+@media (max-width: 600px) {
+    .collaboration-info-bar {
+        padding-right: 8px;
+        padding-left: 8px;
+    }
+
+    .collaboration-info-text {
+        font-size: 13px;
+    }
+
+    .share-tooltip-content {
+        width: calc(100vw - 64px);
+    }
+
+    .share-url-row {
+        align-items: stretch;
+        flex-direction: column;
+    }
+
+    .copy-url-button.e-btn {
+        width: 100%;
+    }
+}
