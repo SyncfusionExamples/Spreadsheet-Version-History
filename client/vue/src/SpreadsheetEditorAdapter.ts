@@ -13,17 +13,21 @@ interface ImportFileResponse {
 export class SpreadsheetEditorAdapter implements ICollaborationProvider {
     public currentRoomName: string = '';
 
+    private isVersionHistoryMode: boolean = false;
+
     /**
      * Initializes a new instance of the Spreadsheet collaboration adapter.
      *
      * @param spreadsheet - The Spreadsheet instance used for collaborative editing.
      * @param serviceUrl - The Collaboration Server URL.
      * @param currentUser - The display name of the current participant.
+     * @param onVersionSaved - The callback invoked when a version is saved.
      */
     public constructor(
         private spreadsheet: Spreadsheet,
         private serviceUrl: string,
-        private currentUser: string
+        private currentUser: string,
+        private onVersionSaved: () => Promise<void>
     ) {
         this.serviceUrl = serviceUrl.endsWith('/')
             ? serviceUrl
@@ -36,7 +40,10 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
      * @param fileName - The name of the workbook to load.
      * @param roomName - The unique collaboration room name.
      */
-    public async loadFromServer(fileName: string, roomName: string): Promise<void> {
+    public async loadFromServer(
+        fileName: string,
+        roomName: string
+    ): Promise<void> {
         const response: Response = await fetch(
             this.serviceUrl + 'api/CollaborativeEditing/ImportFile',
             {
@@ -56,45 +63,85 @@ export class SpreadsheetEditorAdapter implements ICollaborationProvider {
         }
 
         const data: ImportFileResponse = JSON.parse(await response.text());
-
         this.currentRoomName = roomName;
         this.spreadsheet.collaborativeEditingModule.updateRoomInfo(
             roomName,
             data.version,
             this.serviceUrl + 'api/CollaborativeEditing/'
         );
-        this.spreadsheet.collaborativeEditingModule.setLocalUser(this.currentUser);
-        this.spreadsheet.openFromJson({
+        this.spreadsheet.collaborativeEditingModule.setLocalUser(
+            this.currentUser
+        );
+        await this.spreadsheet.openFromJson({
             file: data.sfdt
         });
     }
 
-    /**
-     * Sends a completed local Spreadsheet action to the Collaboration Server.
-     *
-     * @param action - The completed Spreadsheet action.
-     */
+    /** Sends a completed local Spreadsheet action to the Collaboration Server. */
     public sendActionToServer(action: unknown): void {
-        if (action) {
-            this.spreadsheet.collaborativeEditingModule.sendActionToServer(action);
+        if (!action || !this.currentRoomName) {
+            return;
         }
+
+        void this.registerUserAndSendAction(action);
     }
 
-    /**
-     * Applies an action received from another participant to the Spreadsheet.
-     *
-     * @param action - The collaborative action name.
-     * @param data - The collaborative action data received from the server.
-     */
+    /** Registers the participant before sending the Spreadsheet action. */
+    private async registerUserAndSendAction(
+        action: unknown
+    ): Promise<void> {
+        const response: Response = await fetch(
+            this.serviceUrl +
+                'api/CollaborativeEditing/RegisterActionUser',
+            {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    roomName: this.currentRoomName,
+                    currentUser: this.currentUser
+                })
+            }
+        );
+
+        if (!response.ok) {
+            console.error(
+                '[Version History] Failed to register the action user.'
+            );
+        }
+        
+        this.spreadsheet.collaborativeEditingModule.sendActionToServer(
+            action
+        );
+    }
+
+    /** Enables or disables historical-preview isolation. */
+    public setVersionHistoryMode(enabled: boolean): void {
+        this.isVersionHistoryMode = enabled;
+    }
+
+    /** Applies an action received from another participant. */
     public applyRemoteAction(
         action: string,
         data: ICollaborationActionData
     ): void {
-        if (data) {
-            this.spreadsheet.collaborativeEditingModule.applyRemoteAction(
-                action,
-                data.payload
-            );
+        if (action === 'versionRestored') {
+            return;
         }
+
+        if (action === 'versionSaved') {
+            void this.onVersionSaved();
+            return;
+        }
+
+        if (this.isVersionHistoryMode || !data) {
+            return;
+        }
+
+        this.spreadsheet.collaborativeEditingModule.applyRemoteAction(
+            action,
+            data.payload
+        );
     }
 }

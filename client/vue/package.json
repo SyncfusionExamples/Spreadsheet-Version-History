@@ -15,6 +15,7 @@
     "@syncfusion/ej2-buttons": "35.1.37",
     "@syncfusion/ej2-popups": "35.1.37",
     "@syncfusion/ej2-tailwind3-theme": "35.1.37",
+    "@syncfusion/ej2-vue-popups": "35.1.37",
     "@syncfusion/ej2-vue-spreadsheet": "35.1.37",
     "vue": "^3.5.22"
   },

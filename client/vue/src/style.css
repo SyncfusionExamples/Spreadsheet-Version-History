@@ -6,7 +6,7 @@ body,
     width: 100%;
     height: 100%;
     margin: 0;
-    overflow-x: hidden;
+    overflow: hidden;
 }
 
 .collaborative-sample,
@@ -15,10 +15,11 @@ body,
 }
 
 .collaborative-sample {
+    display: flex;
+    flex-direction: column;
     width: 100%;
-    max-width: 100%;
+    height: 100vh;
     margin: 0;
-    padding: 0;
     overflow: hidden;
     color: #242424;
     font-family: "Segoe UI", -apple-system, BlinkMacSystemFont,
@@ -29,11 +30,9 @@ body,
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex: 0 0 50px;
     width: 100%;
     height: 50px;
-    min-height: 50px;
-    max-height: 50px;
-    margin: 0;
     padding: 6px 12px;
     border: 1px solid #d6d6d6;
     border-bottom: 0;
@@ -42,23 +41,27 @@ body,
 
 .collaboration-info-text {
     min-width: 0;
-    margin: 0;
     padding-right: 16px;
     overflow: hidden;
     color: #424242;
-    font-family: inherit;
     font-size: 14px;
-    font-weight: 400;
     line-height: 20px;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.collaboration-actions,
+.version-action-buttons {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 0 0 auto;
 }
 
 .share-tooltip-host {
     display: flex;
     align-items: center;
     justify-content: center;
-    flex: 0 0 auto;
     height: 36px;
 }
 
@@ -74,23 +77,159 @@ body,
 
 .share-button.e-btn {
     min-width: 88px;
-    margin: 0;
     padding: 0 16px !important;
     font-size: 14px;
     font-weight: 600;
 }
 
-.spreadsheet-container {
-    width: 100%;
-    max-width: 100%;
-    margin: 0;
+.version-preview-bar {
+    display: grid;
+    align-items: center;
+    grid-template-columns: 1fr auto 1fr;
+    flex: 0 0 50px;
+    min-height: 50px;
+    padding: 6px 12px;
+    border: 1px solid #d6d6d6;
+    background: #ffffff;
+}
+
+.back-to-document-button {
+    justify-self: start;
     padding: 0;
+    border: 0;
+    background: transparent;
+    color: #0f6cbd;
+    font-family: inherit;
+    font-size: 14px;
+    cursor: pointer;
+}
+
+.version-preview-date {
+    justify-self: center;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.version-preview-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    justify-self: end;
+}
+
+.version-preview-bar .e-btn {
+    margin-left: 0 !important;
+}
+
+.workspace-container {
+    display: flex;
+    flex: 1 1 auto;
+    min-height: 0;
+    width: 100%;
+}
+
+.spreadsheet-container {
+    position: relative;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
     overflow: hidden;
 }
 
 .spreadsheet-container .e-spreadsheet {
     width: 100% !important;
+    height: 100% !important;
     max-width: 100% !important;
+}
+
+.version-history-mode .e-spreadsheet .e-ribbon {
+    display: none !important;
+}
+
+.version-preview-loading {
+    position: absolute;
+    z-index: 5;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.72);
+    font-size: 14px;
+}
+
+.version-history-panel {
+    flex: 0 0 320px;
+    width: 320px;
+    overflow-y: auto;
+    border-left: 1px solid #d6d6d6;
+    background: #ffffff;
+}
+
+.version-history-header {
+    position: sticky;
+    z-index: 1;
+    top: 0;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    min-height: 48px;
+    padding: 10px 14px;
+    border-bottom: 1px solid #d6d6d6;
+    background: #ffffff;
+}
+
+.version-history-close {
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: #424242;
+    font-family: inherit;
+    font-size: 22px;
+    line-height: 30px;
+    cursor: pointer;
+}
+
+.version-history-item {
+    display: flex;
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+    width: 100%;
+    padding: 14px 16px;
+    border: 0;
+    border-bottom: 1px solid #eeeeee;
+    background: transparent;
+    color: #242424;
+    font-family: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.version-history-item:hover,
+.version-history-item-selected {
+    background: #f3f2f1;
+}
+
+.version-history-item-selected {
+    border-left: 3px solid #0f6cbd;
+    padding-left: 13px;
+}
+
+.version-history-date {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.version-history-user,
+.version-history-empty {
+    color: #616161;
+    font-size: 13px;
+}
+
+.version-history-empty {
+    padding: 16px;
 }
 
 .collaboration-share-tooltip.e-tooltip-wrap {
@@ -138,14 +277,101 @@ body,
     white-space: nowrap;
 }
 
+.restore-version-dialog .e-dlg-content {
+    padding: 20px 24px 16px;
+}
+
+.restore-dialog-content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.restore-dialog-message {
+    margin: 0;
+    color: #424242;
+    font-size: 14px;
+    line-height: 22px;
+}
+
+.restore-dialog-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    width: 100%;
+}
+
+.restore-dialog-actions .e-btn {
+    min-width: 100px;
+}
+
+.remote-restore-dialog .e-dlg-header {
+    color: #107c41;
+}
+
+.remote-restore-dialog .e-dlg-content {
+    padding: 20px 24px 16px;
+}
+
+.remote-restore-content {
+    display: flex;
+    flex-direction: column;
+    gap: 24px;
+}
+
+.remote-restore-message {
+    color: #424242;
+    font-size: 14px;
+    line-height: 22px;
+}
+
+.remote-restore-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+.remote-restore-actions .e-btn {
+    min-width: 120px;
+}
+
+@media (max-width: 800px) {
+    .collaboration-info-text {
+        display: none;
+    }
+
+    .version-history-panel {
+        flex-basis: 280px;
+        width: 280px;
+    }
+}
+
 @media (max-width: 600px) {
     .collaboration-info-bar {
         padding-right: 8px;
         padding-left: 8px;
     }
 
-    .collaboration-info-text {
-        font-size: 13px;
+    .collaboration-actions {
+        gap: 4px;
+    }
+
+    .workspace-container {
+        flex-direction: column;
+    }
+
+    .version-history-panel {
+        flex: 0 0 220px;
+        width: 100%;
+        border-top: 1px solid #d6d6d6;
+        border-left: 0;
+    }
+
+    .version-preview-bar {
+        grid-template-columns: auto 1fr auto;
+        gap: 8px;
     }
 
     .share-tooltip-content {
