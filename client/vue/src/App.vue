@@ -1,24 +1,12 @@
 <script setup lang="ts">
-import {
-    onBeforeUnmount,
-    onMounted,
-    provide,
-    ref
-} from 'vue';
+import { onBeforeUnmount, onMounted, provide, ref } from 'vue';
 import { Button } from '@syncfusion/ej2-buttons';
 import { Tooltip } from '@syncfusion/ej2-popups';
-import {
-    SpreadsheetComponent as EjsSpreadsheet
-} from '@syncfusion/ej2-vue-spreadsheet';
-import {
-    CollaborativeEditingHandler,
-    type Spreadsheet
-} from '@syncfusion/ej2-spreadsheet';
+import { SpreadsheetComponent as EjsSpreadsheet } from '@syncfusion/ej2-vue-spreadsheet';
+import { CollaborativeEditingHandler, type Spreadsheet } from '@syncfusion/ej2-spreadsheet';
 import { CollaborationClient } from '@syncfusion/ej2-collaborator';
 import { SpreadsheetEditorAdapter } from './SpreadsheetEditorAdapter';
-import {
-    DialogComponent as EjsDialog
-} from '@syncfusion/ej2-vue-popups';
+import { DialogComponent as EjsDialog } from '@syncfusion/ej2-vue-popups';
 
 /** Represents the metadata displayed for a saved workbook version. */
 interface SpreadsheetVersionInfo {
@@ -41,7 +29,7 @@ interface RestoreRevisionInfo {
     restoredBy: string;
 }
 
-const serviceUrl: string = 'https://localhost:7002/';
+const serviceUrl: string = 'YOUR_COLLABORATION_SERVER_URL';
 
 const userNames: string[] = [
     'James Carter', 'Olivia Bennett', 'William Parker', 'Emma Collins',
@@ -897,7 +885,6 @@ onBeforeUnmount(() => {
                 <ejs-spreadsheet
                     ref="spreadsheetRef"
                     width="100%"
-                    height="100%"
                     :enableCollaborativeEditing="true"
                     :allowEditing="!isVersionHistoryMode"
                     :created="onCreated"

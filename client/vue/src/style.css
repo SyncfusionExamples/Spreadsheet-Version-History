@@ -9,6 +9,50 @@ body,
     overflow: hidden;
 }
 
+body {
+    min-width: 0;
+    min-height: 0;
+}
+
+.collaborative-sample {
+    display: flex;
+    flex-direction: column;
+    width: 100vw;
+    height: 100vh;
+    margin: 0;
+    overflow: hidden;
+}
+
+.workspace-container {
+    display: flex;
+    flex: 1 1 auto;
+    min-width: 0;
+    min-height: 0;
+    width: 100%;
+    overflow: hidden;
+}
+
+.spreadsheet-container {
+    position: relative;
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.spreadsheet-container .e-spreadsheet {
+    width: 100% !important;
+    height: 100% !important;
+    max-width: none !important;
+}
+
+.version-history-panel {
+    flex: 0 0 320px;
+    width: 320px;
+    min-height: 0;
+    overflow-y: auto;
+}
+
 .collaborative-sample,
 .collaborative-sample * {
     box-sizing: border-box;
@@ -335,6 +379,12 @@ body,
 
 .remote-restore-actions .e-btn {
     min-width: 120px;
+}
+
+.version-history-mode .e-spreadsheet .e-active-cell,
+.version-history-mode .e-spreadsheet .e-autofill,
+.version-history-mode .e-spreadsheet .e-collaborative-active-cell {
+    display: none !important;
 }
 
 @media (max-width: 800px) {
