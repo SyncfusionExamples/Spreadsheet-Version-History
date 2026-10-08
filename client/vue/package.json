@@ -1,0 +1,29 @@
+{
+  "name": "vue-spreadsheet-collaborative-editing",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@microsoft/signalr": "^9.0.0",
+    "@syncfusion/ej2-collaborator": "35.1.37",
+    "@syncfusion/ej2-spreadsheet": "35.1.37",
+    "@syncfusion/ej2-buttons": "35.1.37",
+    "@syncfusion/ej2-popups": "35.1.37",
+    "@syncfusion/ej2-tailwind3-theme": "35.1.37",
+    "@syncfusion/ej2-vue-spreadsheet": "35.1.37",
+    "vue": "^3.5.22"
+  },
+  "devDependencies": {
+    "@types/node": "^24.7.0",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "@vue/tsconfig": "^0.8.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.9",
+    "vue-tsc": "^3.1.1"
+  }
+}
