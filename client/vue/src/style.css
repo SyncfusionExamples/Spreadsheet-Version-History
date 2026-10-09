@@ -42,7 +42,7 @@ body {
 
 .spreadsheet-container .e-spreadsheet {
     width: 100% !important;
-    height: 100% !important;
+    height: calc(100vh - 50px) !important;
     max-width: none !important;
 }
 
@@ -51,6 +51,7 @@ body {
     width: 320px;
     min-height: 0;
     overflow-y: auto;
+    scrollbar-gutter: stable;
 }
 
 .collaborative-sample,
@@ -180,10 +181,8 @@ body {
     overflow: hidden;
 }
 
-.spreadsheet-container .e-spreadsheet {
-    width: 100% !important;
-    height: 100% !important;
-    max-width: 100% !important;
+.spreadsheet-container.version-history-mode .e-spreadsheet {
+   height: calc(100vh - 100px) !important;
 }
 
 .version-history-mode .e-spreadsheet .e-ribbon {
