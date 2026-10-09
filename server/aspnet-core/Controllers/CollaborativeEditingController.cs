@@ -23,14 +23,20 @@ using Syncfusion.XlsIO;
 
 namespace EJ2SpreadsheetServer.Controllers
 {
+    /// <summary>
+    /// Provides Spreadsheet collaboration, selection synchronization, Version
+    /// History, version preview, download, and restore endpoints.
+    /// </summary>
     [Route("api/[controller]")]
     [ApiController]
     public class CollaborativeEditingController : ControllerBase
     {
+        // Defines the source workbook and Version History storage file names.
         private const string DefaultWorkbookName = "Sample.xlsx";
         private const string CurrentWorkbookName = "Current.xlsx";
         private const string VersionMetadataFileName = "versions.json";
 
+        // Stores each participant's latest selection by room and connection ID.
         private static readonly ConcurrentDictionary<
             string,
             ConcurrentDictionary<string, SpreadsheetSelectionInfo>>
@@ -41,18 +47,22 @@ namespace EJ2SpreadsheetServer.Controllers
                         string,
                         SpreadsheetSelectionInfo>>();
 
+        // Prevents concurrent snapshot and restore operations for the same room.
         private static readonly ConcurrentDictionary<string, SemaphoreSlim>
             VersionLocks =
                 new ConcurrentDictionary<string, SemaphoreSlim>();
 
+        // Tracks restore revisions so connected clients can detect a restore.
         private static readonly ConcurrentDictionary<string, RestoreRevisionInfo>
             RoomRestoreRevisions =
                 new ConcurrentDictionary<string, RestoreRevisionInfo>();
 
+        // Associates a collaboration room with the user who sent the action.
         private static readonly ConcurrentDictionary<string, string>
             RoomActionUsers =
                 new ConcurrentDictionary<string, string>();
 
+        // Uses camel-case JSON so responses match the client-side models.
         private static readonly JsonSerializerSettings
             ControllerJsonSettings = new JsonSerializerSettings
             {
@@ -68,6 +78,13 @@ namespace EJ2SpreadsheetServer.Controllers
         private readonly ICollaborationAdapter adapter;
         private readonly IActiveTransport transport;
 
+        /// <summary>
+        /// Initializes the collaboration controller and its required services.
+        /// </summary>
+        /// <param name="hostingEnvironment">Provides application paths.</param>
+        /// <param name="actionService">Stores and retrieves collaboration actions.</param>
+        /// <param name="adapter">Maps Spreadsheet actions to collaboration actions.</param>
+        /// <param name="transport">Broadcasts events to connected participants.</param>
         public CollaborativeEditingController(
             IWebHostEnvironment hostingEnvironment,
             IActionService actionService,
@@ -80,6 +97,12 @@ namespace EJ2SpreadsheetServer.Controllers
             this.transport = transport;
         }
 
+        /// <summary>
+        /// Loads the current workbook baseline, applies pending actions, and
+        /// returns the latest synchronized workbook to a joining participant.
+        /// </summary>
+        /// <param name="param">Contains the workbook and room names.</param>
+        /// <returns>The workbook JSON and latest collaboration version.</returns>
         [HttpPost]
         [Route("ImportFile")]
         [EnableCors("AllowAllOrigins")]
@@ -132,6 +155,12 @@ namespace EJ2SpreadsheetServer.Controllers
             }
         }
 
+        /// <summary>
+        /// Processes a local Spreadsheet action, assigns its collaboration
+        /// version, broadcasts it, and creates an immutable workbook snapshot.
+        /// </summary>
+        /// <param name="request">The Spreadsheet action payload.</param>
+        /// <returns>The server-processed action serialized as JSON.</returns>
         [HttpPost]
         [Route("UpdateAction")]
         [EnableCors("AllowAllOrigins")]
@@ -205,6 +234,12 @@ namespace EJ2SpreadsheetServer.Controllers
             return payload;
         }
 
+        /// <summary>
+        /// Stores a participant's latest cell selection and broadcasts it to
+        /// the other participants in the room.
+        /// </summary>
+        /// <param name="param">The participant selection details.</param>
+        /// <returns>The stored selection details.</returns>
         [HttpPost]
         [Route("UpdateSelection")]
         [EnableCors("AllowAllOrigins")]
@@ -242,6 +277,11 @@ namespace EJ2SpreadsheetServer.Controllers
             return param;
         }
 
+        /// <summary>
+        /// Returns the active participant selections for a collaboration room.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <returns>The current room selections.</returns>
         [HttpGet]
         [Route("GetRoomSelections/{roomName}")]
         [EnableCors("AllowAllOrigins")]
@@ -262,6 +302,11 @@ namespace EJ2SpreadsheetServer.Controllers
             return Ok(selections.Values.ToList());
         }
 
+        /// <summary>
+        /// Removes a disconnected participant's selection from the room.
+        /// </summary>
+        /// <param name="request">Contains the room and connection IDs.</param>
+        /// <returns>An empty successful response.</returns>
         [HttpPost]
         [Route("RemoveUserSelection")]
         [EnableCors("AllowAllOrigins")]
@@ -293,6 +338,12 @@ namespace EJ2SpreadsheetServer.Controllers
             return Ok();
         }
 
+        /// <summary>
+        /// Returns server actions that were created after the client's last
+        /// synchronized collaboration version.
+        /// </summary>
+        /// <param name="param">Contains the room and last synchronized version.</param>
+        /// <returns>The ordered list of missing Spreadsheet actions.</returns>
         [HttpPost]
         [Route("GetActionsFromServer")]
         [EnableCors("AllowAllOrigins")]
@@ -335,6 +386,12 @@ namespace EJ2SpreadsheetServer.Controllers
             return Ok(payload);
         }
 
+        /// <summary>
+        /// Retrieves the saved version metadata for a collaboration room and
+        /// orders the entries from newest to oldest for the history panel.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <returns>The serialized Version History metadata.</returns>
         [HttpGet]
         [Route("GetVersionHistory/{roomName}")]
         [EnableCors("AllowAllOrigins")]
@@ -370,6 +427,12 @@ namespace EJ2SpreadsheetServer.Controllers
             );
         }
 
+        /// <summary>
+        /// Loads the immutable XLSX snapshot associated with a selected version
+        /// and converts it to workbook JSON for read-only preview.
+        /// </summary>
+        /// <param name="request">Contains the room name and version ID.</param>
+        /// <returns>The selected workbook JSON and collaboration version.</returns>
         [HttpPost]
         [Route("GetVersionWorkbook")]
         [EnableCors("AllowAllOrigins")]
@@ -425,6 +488,12 @@ namespace EJ2SpreadsheetServer.Controllers
             );
         }
 
+        /// <summary>
+        /// Makes the selected historical snapshot the current room workbook,
+        /// clears pending actions, and notifies connected participants.
+        /// </summary>
+        /// <param name="request">Contains the room, version, and restoring user.</param>
+        /// <returns>A successful response when the restore completes.</returns>
         [HttpPost]
         [Route("RestoreVersion")]
         [EnableCors("AllowAllOrigins")]
@@ -902,6 +971,12 @@ namespace EJ2SpreadsheetServer.Controllers
             }
         }
 
+        /// <summary>
+        /// Converts XLSX workbook bytes to the JSON format consumed by Spreadsheet.
+        /// </summary>
+        /// <param name="workbookData">The XLSX workbook bytes.</param>
+        /// <param name="fileName">The workbook file name.</param>
+        /// <returns>The converted workbook JSON.</returns>
         private string ConvertWorkbookToJson(
             byte[] workbookData,
             string fileName)
@@ -932,6 +1007,12 @@ namespace EJ2SpreadsheetServer.Controllers
             }
         }
 
+        /// <summary>
+        /// Registers the participant name used for subsequent automatic version
+        /// metadata in the collaboration room.
+        /// </summary>
+        /// <param name="request">Contains the room and participant names.</param>
+        /// <returns>A successful response when the user is registered.</returns>
         [HttpPost]
         [Route("RegisterActionUser")]
         [EnableCors("AllowAllOrigins")]
@@ -954,6 +1035,12 @@ namespace EJ2SpreadsheetServer.Controllers
             return Ok();
         }
 
+        /// <summary>
+        /// Returns the restored room workbook when available; otherwise returns
+        /// the original sample workbook path.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <returns>The baseline workbook path.</returns>
         private string GetRoomBaselineWorkbookPath(string roomName)
         {
             string currentWorkbookPath = Path.Combine(
@@ -973,6 +1060,11 @@ namespace EJ2SpreadsheetServer.Controllers
             );
         }
 
+        /// <summary>
+        /// Returns the Version History storage directory for a room.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <returns>The room version directory.</returns>
         private string GetRoomVersionDirectory(string roomName)
         {
             return Path.Combine(
@@ -982,6 +1074,12 @@ namespace EJ2SpreadsheetServer.Controllers
             );
         }
 
+        /// <summary>
+        /// Returns the immutable XLSX snapshot path for a version ID.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <param name="versionId">The version identifier.</param>
+        /// <returns>The version workbook path.</returns>
         private string GetVersionWorkbookPath(
             string roomName,
             string versionId)
@@ -992,6 +1090,11 @@ namespace EJ2SpreadsheetServer.Controllers
             );
         }
 
+        /// <summary>
+        /// Reads the Version History metadata stored for a room.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <returns>The room Version History.</returns>
         private async Task<SpreadsheetVersionHistory>
             ReadVersionHistoryAsync(string roomName)
         {
@@ -1020,6 +1123,11 @@ namespace EJ2SpreadsheetServer.Controllers
                 new SpreadsheetVersionHistory();
         }
 
+        /// <summary>
+        /// Writes Version History metadata atomically through a temporary file.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <param name="history">The Version History to persist.</param>
         private async Task WriteVersionHistoryAsync(
             string roomName,
             SpreadsheetVersionHistory history)
@@ -1056,6 +1164,12 @@ namespace EJ2SpreadsheetServer.Controllers
             );
         }
 
+        /// <summary>
+        /// Retrieves the metadata entry for a selected version ID.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <param name="versionId">The version identifier.</param>
+        /// <returns>The matching version metadata, when available.</returns>
         private async Task<SpreadsheetVersionInfo>
             GetVersionInfoAsync(
                 string roomName,
@@ -1073,6 +1187,11 @@ namespace EJ2SpreadsheetServer.Controllers
             );
         }
 
+        /// <summary>
+        /// Returns the synchronization lock used for a room's version operations.
+        /// </summary>
+        /// <param name="roomName">The collaboration room name.</param>
+        /// <returns>The room version lock.</returns>
         private static SemaphoreSlim GetVersionLock(
             string roomName)
         {
@@ -1082,6 +1201,11 @@ namespace EJ2SpreadsheetServer.Controllers
             );
         }
 
+        /// <summary>
+        /// Removes invalid path characters from a room name or version ID.
+        /// </summary>
+        /// <param name="value">The path segment to sanitize.</param>
+        /// <returns>A safe path segment.</returns>
         private static string SanitizePathSegment(string value)
         {
             if (string.IsNullOrWhiteSpace(value))
@@ -1106,6 +1230,9 @@ namespace EJ2SpreadsheetServer.Controllers
                 : sanitizedValue;
         }
 
+        /// <summary>
+        /// Represents a request to remove a participant selection.
+        /// </summary>
         public class RemoveSelectionRequest
         {
             public string RoomName { get; set; }
@@ -1113,6 +1240,9 @@ namespace EJ2SpreadsheetServer.Controllers
             public string ConnectionId { get; set; }
         }
 
+        /// <summary>
+        /// Represents workbook JSON and its latest collaboration version.
+        /// </summary>
         public class DocumentContent
         {
             public int version { get; set; }
@@ -1120,6 +1250,9 @@ namespace EJ2SpreadsheetServer.Controllers
             public string sfdt { get; set; }
         }
 
+        /// <summary>
+        /// Represents the workbook and room names used during import.
+        /// </summary>
         public class FileInfo
         {
             public string fileName { get; set; }
@@ -1127,6 +1260,9 @@ namespace EJ2SpreadsheetServer.Controllers
             public string roomName { get; set; }
         }
 
+        /// <summary>
+        /// Contains an authoritative XLSX snapshot and its included version.
+        /// </summary>
         private class MaterializedWorkbook
         {
             public byte[] WorkbookData { get; set; }

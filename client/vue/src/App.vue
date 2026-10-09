@@ -437,7 +437,6 @@ async function enterVersionHistoryMode(): Promise<void> {
     if (spreadsheet) {
         spreadsheet.allowEditing = false;
         spreadsheet.showFormulaBar = false;
-        spreadsheet.showRibbon = false;
         spreadsheet.dataBind();
 
         await nextTick();
@@ -571,7 +570,6 @@ async function openVersionPreview(
 
         spreadsheet.allowEditing = false;
         spreadsheet.showFormulaBar = false;
-        spreadsheet.showRibbon = false;
         spreadsheet.dataBind();
     } catch (error) {
         selectedVersionId.value = '';
@@ -607,7 +605,6 @@ async function backToDocument(): Promise<void> {
         if (spreadsheet) {
             spreadsheet.allowEditing = true;
             spreadsheet.showFormulaBar = true;
-            spreadsheet.showRibbon = true;
             spreadsheet.dataBind();
         }
 
@@ -751,7 +748,6 @@ async function reloadLatestWorkbook(): Promise<void> {
         if (spreadsheet) {
             spreadsheet.allowEditing = true;
             spreadsheet.showFormulaBar = true;
-            spreadsheet.showRibbon = true;
             spreadsheet.dataBind();
         }
 
