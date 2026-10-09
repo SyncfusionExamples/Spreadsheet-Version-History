@@ -251,11 +251,7 @@ function startVersionHistoryRefresh(): void {
     stopVersionHistoryRefresh();
 
     versionHistoryRefreshTimer = window.setInterval(() => {
-        if (versionHistoryVisible.value &&
-            !versionHistoryLoading.value &&
-            !versionPreviewLoading.value) {
-            void loadVersionHistory();
-        }
+        void loadVersionHistory(false);
     }, 2000);
 }
 
@@ -444,7 +440,7 @@ async function enterVersionHistoryMode(): Promise<void> {
         spreadsheet.dataBind();
     }
 
-    await loadVersionHistory();
+    await loadVersionHistory(true);
     startVersionHistoryRefresh();
 }
 
@@ -459,23 +455,22 @@ async function closeVersionHistory(): Promise<void> {
 }
 
 /** Retrieves the latest version metadata for the current room. */
-async function loadVersionHistory(): Promise<void> {
-    if (!adapter?.currentRoomName || versionHistoryLoading.value) {
+async function loadVersionHistory(
+    showLoading: boolean = false
+): Promise<void> {
+    if (!adapter?.currentRoomName) {
         return;
     }
 
-    versionHistoryLoading.value = true;
+    if (showLoading) {
+        versionHistoryLoading.value = true;
+    }
 
     try {
         const response: Response = await fetch(
             serviceUrl +
                 'api/CollaborativeEditing/GetVersionHistory/' +
-                encodeURIComponent(adapter.currentRoomName) +
-                '?timestamp=' +
-                Date.now(),
-            {
-                cache: 'no-store'
-            }
+                encodeURIComponent(adapter.currentRoomName)
         );
 
         if (!response.ok) {
@@ -484,12 +479,34 @@ async function loadVersionHistory(): Promise<void> {
             );
         }
 
-        versionHistory.value =
+        const versions: SpreadsheetVersionInfo[] =
             await response.json() as SpreadsheetVersionInfo[];
+
+        const currentVersionIds: string =
+            versionHistory.value
+                .map((version: SpreadsheetVersionInfo) =>
+                    version.versionId
+                )
+                .join('|');
+        const updatedVersionIds: string =
+            versions
+                .map((version: SpreadsheetVersionInfo) =>
+                    version.versionId
+                )
+                .join('|');
+
+        if (currentVersionIds !== updatedVersionIds) {
+            versionHistory.value = versions;
+        }
     } catch (error) {
-        console.error('[Version History] Failed to load versions.', error);
+        console.error(
+            '[Version History] Failed to load versions.',
+            error
+        );
     } finally {
-        versionHistoryLoading.value = false;
+        if (showLoading) {
+            versionHistoryLoading.value = false;
+        }
     }
 }
 
@@ -703,7 +720,7 @@ async function downloadSelectedVersion(): Promise<void> {
 /** Refreshes the visible history after another participant saves a version. */
 async function handleRemoteVersionSaved(): Promise<void> {
     if (versionHistoryVisible.value) {
-        await loadVersionHistory();
+        await loadVersionHistory(false);
     }
 }
 
