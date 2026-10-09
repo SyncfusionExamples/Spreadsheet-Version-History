@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onBeforeUnmount, onMounted, provide, ref } from 'vue';
+import { nextTick, onBeforeUnmount, onMounted, provide, ref } from 'vue';
 import { Button } from '@syncfusion/ej2-buttons';
 import { Tooltip } from '@syncfusion/ej2-popups';
 import { SpreadsheetComponent as EjsSpreadsheet } from '@syncfusion/ej2-vue-spreadsheet';
@@ -437,7 +437,11 @@ async function enterVersionHistoryMode(): Promise<void> {
     if (spreadsheet) {
         spreadsheet.allowEditing = false;
         spreadsheet.showFormulaBar = false;
+        spreadsheet.showRibbon = false;
         spreadsheet.dataBind();
+
+        await nextTick();
+        spreadsheet.resize();
     }
 
     await loadVersionHistory(true);
@@ -567,6 +571,7 @@ async function openVersionPreview(
 
         spreadsheet.allowEditing = false;
         spreadsheet.showFormulaBar = false;
+        spreadsheet.showRibbon = false;
         spreadsheet.dataBind();
     } catch (error) {
         selectedVersionId.value = '';
@@ -602,6 +607,7 @@ async function backToDocument(): Promise<void> {
         if (spreadsheet) {
             spreadsheet.allowEditing = true;
             spreadsheet.showFormulaBar = true;
+            spreadsheet.showRibbon = true;
             spreadsheet.dataBind();
         }
 
@@ -610,6 +616,8 @@ async function backToDocument(): Promise<void> {
         selectedVersionId.value = '';
         selectedVersion.value = null;
         versionHistoryVisible.value = false;
+        await nextTick();
+        if (spreadsheet) { spreadsheet.resize();}
     } catch (error) {
         console.error('[Version History] Failed to return to the document.', error);
     } finally {
@@ -743,6 +751,7 @@ async function reloadLatestWorkbook(): Promise<void> {
         if (spreadsheet) {
             spreadsheet.allowEditing = true;
             spreadsheet.showFormulaBar = true;
+            spreadsheet.showRibbon = true;
             spreadsheet.dataBind();
         }
 
@@ -751,6 +760,8 @@ async function reloadLatestWorkbook(): Promise<void> {
         selectedVersionId.value = '';
         selectedVersion.value = null;
         versionHistoryVisible.value = false;
+        await nextTick();
+         if (spreadsheet) { spreadsheet.resize();}
     } catch (error) {
         console.error('[Version History] Failed to load the restored version.', error);
     } finally {
