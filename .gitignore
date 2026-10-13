@@ -1,0 +1,43 @@
+# Node
+node_modules/
+dist/
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# .NET build output
+**/bin/
+**/obj/
+
+# Secrets
+SyncfusionLicense.txt
+appsettings.Development.json
+
+# Runtime Version History
+**/VersionData/*
+!**/VersionData/.gitkeep
+
+# Debug and logs
+*.pdb
+*.log
+
+# IDE
+.vs/
+.vscode/*
+!.vscode/extensions.json
+.idea/
+
+# Operating system
+.DS_Store
+Thumbs.db
+
+# Local files
+*.local
