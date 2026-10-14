@@ -8,6 +8,9 @@ import os
 import sys
 import traceback
 import uuid
+import datetime
+import threading
+import shutil
 from io import BytesIO
 
 # ============================================================================
@@ -161,6 +164,35 @@ rooms = {}
 room_selections = {}
 
 # ============================================================================
+# Version History Locking (per-room synchronization)
+# ============================================================================
+
+version_locks = {}
+version_locks_guard = threading.Lock()
+
+
+def get_version_lock(room_name):
+    with version_locks_guard:
+        if room_name not in version_locks:
+            version_locks[room_name] = (
+                threading.Lock()
+            )
+
+        return version_locks[room_name]
+
+# ============================================================================
+# Version Restore State (in-memory restore tracking)
+# ============================================================================
+
+restore_revisions = {}
+
+# ============================================================================
+# Action User Registration (participant name tracking)
+# ============================================================================
+
+room_action_users = {}
+
+# ============================================================================
 # Collaboration Redis Constants
 # ============================================================================
 
@@ -241,12 +273,19 @@ files_root = os.path.join(current_working_directory, "Files")
 data_root = os.path.join(files_root, "Data")
 OUTPUT_DIRECTORY = os.path.join(files_root, "Output")
 
+# Version History storage (independent per room)
+VERSION_DATA_ROOT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "VersionData"
+)
+
 # Immutable sample workbook (never overwritten)
 SAMPLE_WORKBOOK = os.path.join(data_root, "Sample.xlsx")
 
 # Make sure the runtime folders exist (idempotent).
 os.makedirs(data_root, exist_ok=True)
 os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
+os.makedirs(VERSION_DATA_ROOT, exist_ok=True)
 
 # ============================================================================
 # Load the .NET wrapper assemblies via pythonnet.
@@ -359,8 +398,20 @@ from System.IO import SeekOrigin
 
 # ---------------------------------------------------------------------------
 # Register the Syncfusion license
-LICENSE_KEY = os.environ.get("SYNCFUSION_LICENSE_KEY", "")
-SyncfusionLicenseProvider.RegisterLicense(LICENSE_KEY)
+LICENSE_KEY = os.environ.get(
+    "SYNCFUSION_LICENSE_KEY",
+    ""
+).strip()
+
+if not LICENSE_KEY:
+    raise RuntimeError(
+        "Configure the SYNCFUSION_LICENSE_KEY "
+        "environment variable."
+    )
+
+SyncfusionLicenseProvider.RegisterLicense(
+    LICENSE_KEY
+)
 
 spreadEditor = SpreadsheetEditor()
 collabWrapper = SpreadsheetCollaborationWrapper()
@@ -638,33 +689,46 @@ def collaboration(ws):
                 if len(rooms[room_name]) == 0:
                     del rooms[room_name]
 
-                    # Final save: include all remaining unsaved actions
                     try:
-                        file_name = "Sample.xlsx"  # Default file name for final save
-                        
-                        # Retrieve all remaining unsaved actions (both active and threshold-selected)
-                        all_unsaved_actions = get_all_unsaved_actions(room_name)
-                        
+                        file_name = "Sample.xlsx"
+                        all_unsaved_actions = (
+                            get_all_unsaved_actions(
+                                room_name
+                            )
+                        )
+
                         if all_unsaved_actions:
-                            # Temporarily store all unsaved actions for process_save_actions
-                            redis_client.delete(get_actions_to_remove_key(room_name))
+                            redis_client.delete(
+                                get_actions_to_remove_key(
+                                    room_name
+                                )
+                            )
+
                             for action in all_unsaved_actions:
                                 redis_client.rpush(
-                                    get_actions_to_remove_key(room_name),
+                                    get_actions_to_remove_key(
+                                        room_name
+                                    ),
                                     json.dumps(action)
                                 )
-                            
+
                             process_save_actions(
                                 room_name,
                                 file_name,
                                 partial_save=False
                             )
                         else:
-                            # No unsaved actions, just clear records
-                            clear_records(room_name, partial_save=False)
-                        
-                    except Exception as ex:
-                        print(f"[WORKBOOK SAVE] Failed for room {room_name}: {ex}")
+                            clear_records(
+                                room_name,
+                                partial_save=False
+                            )
+                    except Exception as exception:
+                        print(
+                            f"[WORKBOOK SAVE] "
+                            f"Failed for room {room_name}: "
+                            f"{exception}",
+                            flush=True
+                        )
 
             sessions.pop(
                 connection_id,
@@ -701,14 +765,70 @@ def get_output_workbook_path(file_name):
         safe_file_name
     )
 
+def is_valid_xlsx_file(workbook_path):
+    if not os.path.isfile(workbook_path):
+        return False
+
+    if os.path.getsize(workbook_path) < 4:
+        return False
+
+    with open(workbook_path, "rb") as workbook_file:
+        return workbook_file.read(4) == b"PK\x03\x04"
+
+
 def get_source_workbook_path(file_name):
-    """Get source workbook: output if exists, else immutable Sample.xlsx."""
-    output_workbook_path = get_output_workbook_path(file_name)
-    
-    if os.path.isfile(output_workbook_path):
+    output_workbook_path = get_output_workbook_path(
+        file_name
+    )
+
+    if is_valid_xlsx_file(output_workbook_path):
         return output_workbook_path
-    
+
+    if not is_valid_xlsx_file(SAMPLE_WORKBOOK):
+        raise RuntimeError(
+            "The immutable Sample.xlsx file is missing or invalid."
+        )
+
     return SAMPLE_WORKBOOK
+
+
+def get_version_room_directory(room_name):
+    """Get or create version storage directory for a room."""
+    safe_room_name = sanitize_room_name(room_name)
+    room_directory = os.path.join(
+        VERSION_DATA_ROOT,
+        safe_room_name
+    )
+
+    os.makedirs(
+        room_directory,
+        exist_ok=True
+    )
+
+    return room_directory
+
+
+def get_version_metadata_path(room_name):
+    """Get path to room's versions.json metadata file."""
+    return os.path.join(
+        get_version_room_directory(room_name),
+        "versions.json"
+    )
+
+
+def get_version_workbook_path(
+    room_name,
+    version_id
+):
+    """Get path to a specific version snapshot XLSX."""
+    safe_version_id = os.path.basename(
+        str(version_id)
+    )
+
+    return os.path.join(
+        get_version_room_directory(room_name),
+        f"{safe_version_id}.xlsx"
+    )
 
 def get_version_key(room_name):
 
@@ -1067,6 +1187,229 @@ def get_all_unsaved_actions(room_name):
     
     return unique_actions
 
+
+def read_version_history(room_name):
+    """Read version history metadata for a room."""
+    metadata_path = get_version_metadata_path(
+        room_name
+    )
+
+    if not os.path.isfile(metadata_path):
+        return {
+            "versions": []
+        }
+
+    try:
+        with open(
+            metadata_path,
+            "r",
+            encoding="utf-8"
+        ) as metadata_file:
+            history = json.load(metadata_file)
+
+        if not isinstance(history, dict):
+            return {
+                "versions": []
+            }
+
+        versions = history.get("versions")
+
+        if not isinstance(versions, list):
+            versions = []
+
+        return {
+            "versions": versions
+        }
+    except (
+        OSError,
+        json.JSONDecodeError
+    ):
+        return {
+            "versions": []
+        }
+
+
+def write_version_history(
+    room_name,
+    history
+):
+    """Write version history metadata to disk."""
+    room_directory = get_version_room_directory(
+        room_name
+    )
+    metadata_path = os.path.join(
+        room_directory,
+        "versions.json"
+    )
+    temporary_path = metadata_path + ".tmp"
+
+    with open(
+        temporary_path,
+        "w",
+        encoding="utf-8"
+    ) as metadata_file:
+        json.dump(
+            history,
+            metadata_file,
+            indent=2
+        )
+
+    os.replace(
+        temporary_path,
+        metadata_path
+    )
+
+
+def get_actions_through_version(
+    room_name,
+    target_version
+):
+    """Retrieve all actions through a target collaboration version."""
+    actions = get_pending_operations(
+        room_name,
+        0,
+        -1
+    ) or []
+
+    effective_actions = [
+        action
+        for action in actions
+        if int(action.get("version", 0))
+        <= int(target_version)
+    ]
+
+    effective_actions.sort(
+        key=lambda action:
+            int(action.get("version", 0))
+    )
+
+    return effective_actions
+
+
+def normalize_spreadsheet_actions(actions):
+    """Normalize action list for .NET wrapper."""
+    if not actions:
+        return []
+    
+    return actions
+
+
+def create_automatic_version(
+    room_name,
+    file_name,
+    current_user,
+    collaboration_version,
+    action_name
+):
+    """Create an immutable version snapshot after an action is successfully processed."""
+    version_lock = get_version_lock(
+        room_name
+    )
+
+    with version_lock:
+        history = read_version_history(
+            room_name
+        )
+
+        duplicate = any(
+            int(version.get(
+                "collaborationVersion",
+                0
+            )) == int(collaboration_version)
+            for version in history["versions"]
+        )
+
+        if duplicate:
+            return None
+
+        source_path = get_source_workbook_path(
+            file_name
+        )
+
+        if not os.path.isfile(source_path):
+            raise FileNotFoundError(
+                f"Workbook not found: {source_path}"
+            )
+
+        with open(
+            source_path,
+            "rb"
+        ) as workbook_file:
+            workbook_bytes = workbook_file.read()
+
+        actions = get_actions_through_version(
+            room_name,
+            collaboration_version
+        )
+
+        normalized_actions = (
+            normalize_spreadsheet_actions(actions)
+            if actions
+            else []
+        )
+
+        snapshot_bytes = (
+            collabWrapper.ApplyCollaborativeActions(
+                workbook_bytes,
+                json.dumps(normalized_actions)
+            )
+            if normalized_actions
+            else workbook_bytes
+        )
+
+        version_id = uuid.uuid4().hex
+        version_path = get_version_workbook_path(
+            room_name,
+            version_id
+        )
+        temporary_path = version_path + ".tmp"
+
+        with open(
+            temporary_path,
+            "wb"
+        ) as version_file:
+            version_file.write(
+                bytes(snapshot_bytes)
+            )
+
+        os.replace(
+            temporary_path,
+            version_path
+        )
+
+        version_info = {
+            "versionId": version_id,
+            "fileName": file_name,
+            "modifiedBy": (
+                current_user
+                if current_user
+                else "Guest User"
+            ),
+            "createdAtUtc": (
+                datetime.datetime
+                    .now(datetime.timezone.utc)
+                    .isoformat()
+            ),
+            "collaborationVersion":
+                int(collaboration_version),
+            "action": (
+                action_name
+                if action_name
+                else "Workbook changed"
+            )
+        }
+
+        history["versions"].append(
+            version_info
+        )
+
+        write_version_history(
+            room_name,
+            history
+        )
+
+        return version_info
+
 def clear_records(
     room_name,
     partial_save=False
@@ -1090,6 +1433,28 @@ def clear_records(
         )
     )
 
+
+def clear_room_collaboration_records(
+    room_name
+):
+    """Clear all collaboration records for a room (used during restore)."""
+    redis_client.delete(room_name)
+
+    redis_client.delete(
+        get_version_key(room_name)
+    )
+
+    redis_client.delete(
+        get_revision_key(room_name)
+    )
+
+    redis_client.delete(
+        get_actions_to_remove_key(
+            room_name
+        )
+    )
+
+
 def process_save_actions(
     room_name,
     file_name,
@@ -1099,55 +1464,92 @@ def process_save_actions(
     actions = get_actions_to_save(room_name)
 
     if not actions:
-        print(f"[WORKBOOK SAVE] No unsaved actions for room: {room_name}")
+        print(
+            f"[WORKBOOK SAVE] "
+            f"No unsaved actions for room: {room_name}"
+        )
         return True
 
-    # Get source workbook (output if exists, else immutable Sample.xlsx)
-    source_path = get_source_workbook_path(file_name)
+    source_path = get_source_workbook_path(
+        file_name
+    )
+
     if not os.path.isfile(source_path):
-        print(f"[WORKBOOK SAVE] Failed for room {room_name}: Source workbook not found at {source_path}")
+        print(
+            f"[WORKBOOK SAVE] "
+            f"Failed for room {room_name}: "
+            f"Source workbook not found at {source_path}"
+        )
         return False
 
     temp_path = None
+
     try:
-        with open(source_path, "rb") as f:
-            workbook_bytes = f.read()
+        with open(
+            source_path,
+            "rb"
+        ) as file_handle:
+            workbook_bytes = file_handle.read()
 
         actions_json = json.dumps(actions)
 
-        # Apply actions via wrapper
-        updated_bytes = collabWrapper.ApplyCollaborativeActions(
-            workbook_bytes,
-            actions_json
+        updated_bytes = (
+            collabWrapper.ApplyCollaborativeActions(
+                workbook_bytes,
+                actions_json
+            )
         )
 
-        # Save to temporary file first
-        target_path = get_output_workbook_path(file_name)
+        target_path = get_output_workbook_path(
+            file_name
+        )
+
         temp_path = target_path + ".tmp.xlsx"
 
-        print(f"[WORKBOOK SAVE] Room={room_name}, File={target_path}, Actions={len(actions)}")
+        print(
+            f"[WORKBOOK SAVE] "
+            f"Room={room_name}, "
+            f"File={target_path}, "
+            f"Actions={len(actions)}"
+        )
 
-        with open(target_path, "wb") as f:
-            f.write(updated_bytes)
+        with open(
+            temp_path,
+            "wb"
+        ) as temp_file:
+            temp_file.write(updated_bytes)
 
-        # Atomically replace (do not pre-delete target)
-        # os.replace(target_path, target_path)
+        os.replace(
+            temp_path,
+            target_path
+        )
 
-        # Clear only the saved actions
-        clear_records(room_name, partial_save)
+        clear_records(
+            room_name,
+            partial_save
+        )
 
-        print(f"[WORKBOOK SAVE] Saved: {target_path}")
+        print(
+            f"[WORKBOOK SAVE] "
+            f"Saved: {target_path}"
+        )
+
         return True
 
-    except Exception as ex:
-        print(f"[WORKBOOK SAVE] Failed for room {room_name}: {ex}")
-        # Clean up temp file if it exists
+    except Exception as exception:
+        print(
+            f"[WORKBOOK SAVE] "
+            f"Failed for room {room_name}: "
+            f"{exception}"
+        )
+
         if temp_path:
             try:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
-            except:
+            except Exception:
                 pass
+
         return False
 
 # ============================================================================
@@ -1279,6 +1681,53 @@ def import_file():
         )
 
 @app.route(
+    "/api/CollaborativeEditing/RegisterActionUser",
+    methods=["POST"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/RegisterActionUser",
+    methods=["POST"]
+)
+def register_action_user():
+    """Register the participant name for version history tracking."""
+    request_data = request.get_json(
+        silent=True
+    ) or {}
+
+    room_name = str(
+        request_data.get("roomName") or ""
+    ).strip()
+    current_user = str(
+        request_data.get("currentUser") or ""
+    ).strip()
+
+    if not room_name or not current_user:
+        return Response(
+            json.dumps({
+                "error":
+                    "Room name and current user are required."
+            }),
+            status=400,
+            mimetype="application/json"
+        )
+
+    room_action_users[room_name] = current_user
+
+    print(
+        f"[COLLAB] RegisterActionUser: "
+        f"Room={room_name}, User={current_user}",
+        flush=True
+    )
+
+    return Response(
+        json.dumps({
+            "success": True
+        }),
+        status=200,
+        mimetype="application/json"
+    )
+
+@app.route(
     "/api/CollaborativeEditing/UpdateAction",
     methods=["POST"]
 )
@@ -1329,34 +1778,33 @@ def update_action():
         )
 
         if moved_actions:
-
             print(
-                f"[REDIS] "
-                f"Save queue size="
-                f"{len(moved_actions)}"
+                "[REDIS] "
+                f"Save queue size={len(moved_actions)}"
             )
+
             save_count = (
                 get_actions_to_save_count(
                     room_name
                 )
             )
-            file_name = sanitize_file_name(data.get("fileName", "Sample.xlsx"))
-            process_save_actions(
-                room_name,
-                file_name,
-                True
-            )
-            print(
-                redis_client.llen(
-                    get_actions_to_remove_key(
-                        room_name
-                    )
+
+            file_name = sanitize_file_name(
+                data.get(
+                    "fileName",
+                    "Sample.xlsx"
                 )
             )
 
+            process_save_actions(
+                room_name,
+                file_name,
+                partial_save=True
+            )
+
             print(
-                f"[REDIS] ActionsToSave="
-                f"{save_count}"
+                "[REDIS] "
+                f"ActionsToSave={save_count}"
             )
         
         print(
@@ -1424,6 +1872,44 @@ def update_action():
         print(
             f"[COLLAB] Action broadcasted to room {room_name}"
         )
+
+        # Create automatic version after successful action processing
+        try:
+            file_name = sanitize_file_name(data.get("fileName", "Sample.xlsx"))
+            current_user = (
+                data.get("currentUser")
+                or data.get("userId")
+                or room_action_users.get(room_name)
+                or "Guest User"
+            )
+            collaboration_version = data.get("version", 0)
+            action_name = (
+                data.get("action")
+                or data.get("requestType")
+                or "Workbook changed"
+            )
+
+            version_info = create_automatic_version(
+                room_name=room_name,
+                file_name=file_name,
+                current_user=current_user,
+                collaboration_version=collaboration_version,
+                action_name=action_name
+            )
+
+            if version_info:
+                broadcast_to_room(
+                    room_name,
+                    "versionSaved",
+                    version_info
+                )
+        except Exception as exception:
+            print(
+                "[VERSION HISTORY] "
+                f"Automatic version creation failed: "
+                f"{exception}",
+                flush=True
+            )
 
         return Response(
             json.dumps(data),
@@ -1521,6 +2007,497 @@ def get_actions_from_server_endpoint():
 
 
 @app.route(
+    "/api/CollaborativeEditing/GetVersionHistory/<room_name>",
+    methods=["GET"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/GetVersionHistory/<room_name>",
+    methods=["GET"]
+)
+def get_version_history_endpoint(room_name):
+    """Retrieve version history for a room, newest first."""
+    try:
+        history = read_version_history(
+            room_name
+        )
+
+        versions = sorted(
+            history["versions"],
+            key=lambda version:
+                version.get(
+                    "createdAtUtc",
+                    ""
+                ),
+            reverse=True
+        )
+
+        return Response(
+            json.dumps(versions),
+            status=200,
+            mimetype="application/json"
+        )
+
+    except Exception as ex:
+        print(
+            f"[VERSION HISTORY] "
+            f"GetVersionHistory Error: "
+            f"{str(ex)}"
+        )
+
+        return Response(
+            json.dumps({
+                "error": str(ex)
+            }),
+            status=500,
+            mimetype="application/json"
+        )
+
+
+@app.route(
+    "/api/CollaborativeEditing/GetVersionWorkbook",
+    methods=["POST"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/GetVersionWorkbook",
+    methods=["POST"]
+)
+def get_version_workbook():
+    """Retrieve a version snapshot as Spreadsheet JSON for preview."""
+    request_data = request.get_json(
+        silent=True
+    ) or {}
+
+    room_name = str(
+        request_data.get("roomName")
+        or ""
+    ).strip()
+    version_id = str(
+        request_data.get("versionId")
+        or ""
+    ).strip()
+
+    if not room_name or not version_id:
+        return Response(
+            json.dumps({
+                "error":
+                    "Room name and version ID "
+                    "are required."
+            }),
+            status=400,
+            mimetype="application/json"
+        )
+
+    version_path = get_version_workbook_path(
+        room_name,
+        version_id
+    )
+
+    if not os.path.isfile(version_path):
+        return Response(
+            json.dumps({
+                "error":
+                    "The requested version does "
+                    "not exist."
+            }),
+            status=404,
+            mimetype="application/json"
+        )
+
+    try:
+        with open(
+            version_path,
+            "rb"
+        ) as version_file:
+            workbook_bytes = version_file.read()
+
+        workbook_json = spreadEditor.Open(
+            workbook_bytes
+        )
+
+        history = read_version_history(
+            room_name
+        )
+
+        version_info = next(
+            (
+                version
+                for version in history["versions"]
+                if version.get("versionId")
+                == version_id
+            ),
+            None
+        )
+
+        collaboration_version = (
+            int(version_info.get(
+                "collaborationVersion",
+                0
+            ))
+            if version_info
+            else 0
+        )
+
+        return Response(
+            json.dumps({
+                "sfdt": workbook_json,
+                "version":
+                    collaboration_version
+            }),
+            status=200,
+            mimetype="application/json"
+        )
+
+    except Exception as ex:
+        print(
+            f"[VERSION HISTORY] "
+            f"GetVersionWorkbook Error: "
+            f"{str(ex)}"
+        )
+
+        return Response(
+            json.dumps({
+                "error": str(ex)
+            }),
+            status=500,
+            mimetype="application/json"
+        )
+
+
+@app.route(
+    "/api/CollaborativeEditing/DownloadVersion",
+    methods=["POST"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/DownloadVersion",
+    methods=["POST"]
+)
+def download_version():
+    """Download a version snapshot as XLSX attachment."""
+    request_data = request.get_json(
+        silent=True
+    ) or {}
+
+    room_name = str(
+        request_data.get("roomName")
+        or ""
+    ).strip()
+    version_id = str(
+        request_data.get("versionId")
+        or ""
+    ).strip()
+
+    if not room_name or not version_id:
+        return Response(
+            json.dumps({
+                "error":
+                    "Room name and version ID "
+                    "are required."
+            }),
+            status=400,
+            mimetype="application/json"
+        )
+
+    version_path = get_version_workbook_path(
+        room_name,
+        version_id
+    )
+
+    if not os.path.isfile(version_path):
+        return Response(
+            json.dumps({
+                "error":
+                    "The requested version does "
+                    "not exist."
+            }),
+            status=404,
+            mimetype="application/json"
+        )
+
+    try:
+        history = read_version_history(
+            room_name
+        )
+
+        version_info = next(
+            (
+                version
+                for version in history["versions"]
+                if version.get("versionId")
+                == version_id
+            ),
+            None
+        )
+
+        if not version_info:
+            return Response(
+                json.dumps({
+                    "error":
+                        "Version metadata not found."
+                }),
+                status=404,
+                mimetype="application/json"
+            )
+
+        file_name = version_info.get(
+            "fileName",
+            "Sample"
+        )
+        if file_name.lower().endswith(".xlsx"):
+            file_name = file_name[:-5]
+
+        collaboration_version = version_info.get(
+            "collaborationVersion",
+            0
+        )
+        created_at_utc = version_info.get(
+            "createdAtUtc",
+            ""
+        )
+
+        if created_at_utc:
+            timestamp = created_at_utc.replace(
+                ":",
+                "-"
+            ).replace(
+                "T",
+                "_"
+            )
+        else:
+            timestamp = "unknown"
+
+        download_file_name = (
+            f"{file_name}_v{collaboration_version}"
+            f"_{timestamp}.xlsx"
+        )
+
+        return send_file(
+            version_path,
+            as_attachment=True,
+            download_name=download_file_name,
+            mimetype=(
+                "application/vnd.openxmlformats-"
+                "officedocument.spreadsheetml.sheet"
+            )
+        )
+
+    except Exception as ex:
+        print(
+            f"[VERSION HISTORY] "
+            f"DownloadVersion Error: "
+            f"{str(ex)}"
+        )
+
+        return Response(
+            json.dumps({
+                "error": str(ex)
+            }),
+            status=500,
+            mimetype="application/json"
+        )
+
+
+@app.route(
+    "/api/CollaborativeEditing/RestoreVersion",
+    methods=["POST"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/RestoreVersion",
+    methods=["POST"]
+)
+def restore_version():
+    """Restore a version snapshot as the active workbook."""
+    request_data = request.get_json(
+        silent=True
+    ) or {}
+
+    room_name = str(
+        request_data.get("roomName")
+        or ""
+    ).strip()
+    version_id = str(
+        request_data.get("versionId")
+        or ""
+    ).strip()
+    restored_by = str(
+        request_data.get("restoredBy")
+        or ""
+    ).strip()
+
+    if not room_name or not version_id:
+        return Response(
+            json.dumps({
+                "error":
+                    "Room name and version ID "
+                    "are required."
+            }),
+            status=400,
+            mimetype="application/json"
+        )
+
+    version_path = get_version_workbook_path(
+        room_name,
+        version_id
+    )
+
+    if not os.path.isfile(version_path):
+        return Response(
+            json.dumps({
+                "error":
+                    "The requested version does "
+                    "not exist."
+            }),
+            status=404,
+            mimetype="application/json"
+        )
+
+    try:
+        history = read_version_history(
+            room_name
+        )
+
+        version_info = next(
+            (
+                version
+                for version in history["versions"]
+                if version.get("versionId")
+                == version_id
+            ),
+            None
+        )
+
+        file_name = (
+            version_info.get(
+                "fileName",
+                "Sample.xlsx"
+            )
+            if version_info
+            else "Sample.xlsx"
+        )
+
+        output_path = get_output_workbook_path(
+            file_name
+        )
+        temporary_path = output_path + ".restore.tmp"
+
+        os.makedirs(
+            os.path.dirname(output_path),
+            exist_ok=True
+        )
+
+        shutil.copyfile(
+            version_path,
+            temporary_path
+        )
+
+        os.replace(
+            temporary_path,
+            output_path
+        )
+
+        clear_room_collaboration_records(
+            room_name
+        )
+
+        current_restore_info = (
+            restore_revisions.get(
+                room_name,
+                {
+                    "revision": 0,
+                    "restoredBy": ""
+                }
+            )
+        )
+
+        restore_information = {
+            "revision": int(
+                current_restore_info.get(
+                    "revision",
+                    0
+                )
+            ) + 1,
+            "restoredBy": restored_by
+        }
+
+        restore_revisions[
+            room_name
+        ] = restore_information
+
+        broadcast_to_room(
+            room_name,
+            "versionRestored",
+            {
+                "roomName": room_name,
+                "versionId": version_id,
+                "restoreRevision":
+                    restore_information["revision"],
+                "restoredBy":
+                    restore_information["restoredBy"]
+            }
+        )
+
+        print(
+            f"[VERSION HISTORY] "
+            f"RestoreVersion: Room={room_name}, "
+            f"VersionId={version_id}, "
+            f"RestoredBy={restored_by}",
+            flush=True
+        )
+
+        return Response(
+            json.dumps({
+                "success": True,
+                "restoreRevision":
+                    restore_information["revision"]
+            }),
+            status=200,
+            mimetype="application/json"
+        )
+
+    except Exception as ex:
+        print(
+            f"[VERSION HISTORY] "
+            f"RestoreVersion Error: "
+            f"{str(ex)}",
+            flush=True
+        )
+
+        return Response(
+            json.dumps({
+                "error": str(ex)
+            }),
+            status=500,
+            mimetype="application/json"
+        )
+
+
+@app.route(
+    "/api/CollaborativeEditing/"
+    "GetRestoreRevision/<room_name>",
+    methods=["GET"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/"
+    "GetRestoreRevision/<room_name>",
+    methods=["GET"]
+)
+def get_restore_revision(room_name):
+    """Retrieve the current restore revision for a room."""
+    restore_information = restore_revisions.get(
+        room_name,
+        {
+            "revision": 0,
+            "restoredBy": ""
+        }
+    )
+
+    return Response(
+        json.dumps(restore_information),
+        status=200,
+        mimetype="application/json"
+    )
+
+
+@app.route(
     "/api/CollaborativeEditing/UpdateSelection",
     methods=["POST"]
 )
@@ -1605,12 +2582,6 @@ def serve_data(filename):
         return Response("Not found", status=404)
     return send_from_directory(data_root, filename, as_attachment=False)
 
-@app.route("/LicenseKey", methods=["GET"])
-@app.route(f'{BASE_PATH}/LicenseKey', methods=["GET"])
-def license_key():
-    # Lets the frontend register the key at runtime from the Azure app setting.
-    return Response(LICENSE_KEY, mimetype="text/plain")
-
 @app.route("/health", methods=["GET"])
 @app.route(f'{BASE_PATH}/health', methods=["GET"])
 def health_check():
@@ -1656,6 +2627,10 @@ if BASE_PATH:
             return app.send_static_file("index.html")
 
 if __name__ == "__main__":
-    # threaded=True so large uploads don't block the dev server
-    app.run(host="0.0.0.0", port=5000, threaded=True, debug=True) # http://localhost:5000/
-    # app.run(host='', port=5001, debug=True) # http://localhost:5001/
+    app.run(
+        host="0.0.0.0",
+        port=5000,
+        threaded=True,
+        debug=False,
+        use_reloader=False
+    )
