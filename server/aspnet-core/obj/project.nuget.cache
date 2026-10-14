@@ -1,0 +1,104 @@
+{
+  "version": 2,
+  "dgSpecHash": "Se6lnZM0zaA=",
+  "success": false,
+  "projectFilePath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+  "expectedPackageFiles": [
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\bitmiracle.libtiff.net\\2.4.649\\bitmiracle.libtiff.net.2.4.649.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\harfbuzzsharp\\14.2.1.1\\harfbuzzsharp.14.2.1.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\harfbuzzsharp.nativeassets.macos\\14.2.1.1\\harfbuzzsharp.nativeassets.macos.14.2.1.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\harfbuzzsharp.nativeassets.win32\\14.2.1.1\\harfbuzzsharp.nativeassets.win32.14.2.1.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\messagepack\\2.5.302\\messagepack.2.5.302.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\messagepack.annotations\\2.5.302\\messagepack.annotations.2.5.302.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\microsoft.aspnetcore.jsonpatch\\10.0.0\\microsoft.aspnetcore.jsonpatch.10.0.0.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\microsoft.aspnetcore.mvc.newtonsoftjson\\10.0.0\\microsoft.aspnetcore.mvc.newtonsoftjson.10.0.0.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\microsoft.aspnetcore.signalr.stackexchangeredis\\8.0.30\\microsoft.aspnetcore.signalr.stackexchangeredis.8.0.30.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\microsoft.net.stringtools\\17.6.3\\microsoft.net.stringtools.17.6.3.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\microsoft.netcore.platforms\\1.1.0\\microsoft.netcore.platforms.1.1.0.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\microsoft.visualstudio.azure.containers.tools.targets\\1.23.0\\microsoft.visualstudio.azure.containers.tools.targets.1.23.0.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\netstandard.library\\2.0.0\\netstandard.library.2.0.0.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\newtonsoft.json\\13.0.3\\newtonsoft.json.13.0.3.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\newtonsoft.json.bson\\1.0.2\\newtonsoft.json.bson.1.0.2.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\pipelines.sockets.unofficial\\2.2.16\\pipelines.sockets.unofficial.2.2.16.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\skiasharp\\4.150.1\\skiasharp.4.150.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\skiasharp.harfbuzz\\4.150.1\\skiasharp.harfbuzz.4.150.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\skiasharp.nativeassets.linux\\4.150.1\\skiasharp.nativeassets.linux.4.150.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\skiasharp.nativeassets.macos\\4.150.1\\skiasharp.nativeassets.macos.4.150.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\skiasharp.nativeassets.win32\\4.150.1\\skiasharp.nativeassets.win32.4.150.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\stackexchange.redis\\2.13.17\\stackexchange.redis.2.13.17.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.collaborator.server.aspnet.core\\35.1.40\\syncfusion.collaborator.server.aspnet.core.35.1.40.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.compression.net.core\\100.2.1655\\syncfusion.compression.net.core.100.2.1655.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.ej2.spreadsheet.aspnet.core\\100.2.1\\syncfusion.ej2.spreadsheet.aspnet.core.100.2.1.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.licensing\\100.2.10\\syncfusion.licensing.100.2.10.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.markdown\\100.2.113\\syncfusion.markdown.100.2.113.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.metafilerenderer.net.core\\100.2.1639\\syncfusion.metafilerenderer.net.core.100.2.1639.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.pdf.imaging.net.core\\100.2.1654\\syncfusion.pdf.imaging.net.core.100.2.1654.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.pdf.net.core\\100.2.3565\\syncfusion.pdf.net.core.100.2.3565.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.skiasharphelper.net.core\\100.2.1585\\syncfusion.skiasharphelper.net.core.100.2.1585.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.telemetry\\100.2.66\\syncfusion.telemetry.100.2.66.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.xlsio.net.core\\100.2.2670\\syncfusion.xlsio.net.core.100.2.2670.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\syncfusion.xlsiorenderer.net.core\\100.2.1656\\syncfusion.xlsiorenderer.net.core.100.2.1656.nupkg.sha512",
+    "C:\\Users\\BhuvaneshDhakshinamo\\.nuget\\packages\\system.io.hashing\\10.0.2\\system.io.hashing.10.0.2.nupkg.sha512"
+  ],
+  "logs": [
+    {
+      "code": "NU1603",
+      "level": "Warning",
+      "message": "Syncfusion.XlsIORenderer.Net.Core 100.2.1656 depends on Syncfusion.Compression.Net.Core (>= 100.2.1654) but Syncfusion.Compression.Net.Core 100.2.1654 was not found. Syncfusion.Compression.Net.Core 100.2.1655 was resolved instead.",
+      "projectPath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "warningLevel": 1,
+      "filePath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "libraryId": "Syncfusion.Compression.Net.Core",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    },
+    {
+      "code": "NU1603",
+      "level": "Warning",
+      "message": "Syncfusion.XlsIORenderer.Net.Core 100.2.1656 depends on Syncfusion.Pdf.Net.Core (>= 100.2.3556) but Syncfusion.Pdf.Net.Core 100.2.3556 was not found. Syncfusion.Pdf.Net.Core 100.2.3565 was resolved instead.",
+      "projectPath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "warningLevel": 1,
+      "filePath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "libraryId": "Syncfusion.Pdf.Net.Core",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    },
+    {
+      "code": "NU1603",
+      "level": "Warning",
+      "message": "Syncfusion.XlsIORenderer.Net.Core 100.2.1656 depends on Syncfusion.XlsIO.Net.Core (>= 100.2.2652) but Syncfusion.XlsIO.Net.Core 100.2.2652 was not found. Syncfusion.XlsIO.Net.Core 100.2.2670 was resolved instead.",
+      "projectPath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "warningLevel": 1,
+      "filePath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "libraryId": "Syncfusion.XlsIO.Net.Core",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    },
+    {
+      "code": "NU1603",
+      "level": "Warning",
+      "message": "ej2-spreadsheet-server depends on Syncfusion.XlsIORenderer.Net.Core (>= 100.2.1654) but Syncfusion.XlsIORenderer.Net.Core 100.2.1654 was not found. Syncfusion.XlsIORenderer.Net.Core 100.2.1656 was resolved instead.",
+      "projectPath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "warningLevel": 1,
+      "filePath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "libraryId": "Syncfusion.XlsIORenderer.Net.Core",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    },
+    {
+      "code": "NU1605",
+      "level": "Error",
+      "message": "Warning As Error: Detected package downgrade: Syncfusion.Compression.Net.Core from 100.2.1662 to 100.2.1655. Reference the package directly from the project to select a different version. \r\n ej2-spreadsheet-server -> Syncfusion.XlsIORenderer.Net.Core 100.2.1656 -> Syncfusion.XlsIO.Net.Core 100.2.2670 -> Syncfusion.Compression.Net.Core (>= 100.2.1662) \r\n ej2-spreadsheet-server -> Syncfusion.XlsIORenderer.Net.Core 100.2.1656 -> Syncfusion.Compression.Net.Core (>= 100.2.1654)",
+      "projectPath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "filePath": "d:\\Master\\2026\\Oct\\Presale\\PythonNew\\Spreadsheet-Version-History\\server\\aspnet-core\\Spreadsheet-Server\\ej2-spreadsheet-server.csproj",
+      "libraryId": "Syncfusion.Compression.Net.Core",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    }
+  ]
+}
