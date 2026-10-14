@@ -89,8 +89,6 @@ LICENSE_KEY = os.environ.get(
 ).strip()
 ```
 
-Do not commit the actual license key to a public repository.
-
 ## Run the Python Server
 
 From the project root, run:
