@@ -1,132 +1,161 @@
 # Spreadsheet Collaborative Editing with Version History
 
-This sample demonstrates real-time collaborative editing and Version History in the Syncfusion Vue Spreadsheet using a Python server and a .NET wrapper for Spreadsheet processing.
+This repository demonstrates real-time collaborative editing and Version History functionality in the Syncfusion Spreadsheet component.
 
-## Project Structure
+The solution includes:
+
+- Vue client application
+- ASP.NET Core collaborative editing service
+- Python collaborative editing service
+- Redis-based synchronization
+- Version History management
+- Workbook restore and download support
+
+---
+
+## Repository Structure
 
 ```text
 Spreadsheet-Version-History/
-├── Files/
-│   └── Data/
-│       └── Sample.xlsx
-├── frontend/
-│   ├── public/
-│   ├── src/
-│   ├── package.json
-│   └── vite.config.ts
-├── NETStandardWrapperLibrary/
-│   └── WebServiceLibrary/
-│       ├── SpreadsheetEditor.cs
-│       ├── WebServiceLibrary.csproj
-│       ├── WebServiceLibrary.sln
-│       └── build.ps1
-├── app.py
-├── appsettings.json
-├── requirements.txt
+│
+├── client/
+│   └── Vue Spreadsheet application
+│
+├── server/
+│   ├── aspnet-core/
+│   │   └── ASP.NET Core collaborative editing service
+│   │
+│   └── python/
+│       ├── Files/
+│       ├── NETStandardWrapperLibrary/
+│       ├── app.py
+│       ├── appsettings.json
+│       └── requirements.txt
+│
+├── license
 └── README.md
 ```
 
-## Prerequisites
+---
 
-- Python 3.8 or later
-- .NET 10 SDK
-- Node.js and npm
-- Redis connection
-- Valid Syncfusion license key
+## Components
 
-## Build the .NET Wrapper
+### Client Application
 
-Navigate to the wrapper project:
+Vue application hosting the Syncfusion Spreadsheet UI.
 
-```powershell
-cd NETStandardWrapperLibrary\WebServiceLibrary
-```
-
-Build and publish the wrapper:
-
-```powershell
-dotnet restore
-dotnet build -c Release
-dotnet publish -c Release
-```
-
-Return to the project root:
-
-```powershell
-cd ..\..
-```
-
-## Install Python Dependencies
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-## Configure Redis
-
-Update the Redis settings in `appsettings.json`:
-
-```json
-{
-  "Redis": {
-    "Host": "YOUR_REDIS_HOST",
-    "Port": 6380,
-    "Password": "YOUR_REDIS_ACCESS_KEY",
-    "Ssl": true,
-    "AbortConnect": false
-  }
-}
-```
-
-## Configure the Syncfusion License
-
-Open `app.py` and replace the placeholder in the following line with a valid Syncfusion license key:
-
-```python
-LICENSE_KEY = os.environ.get(
-    "SYNCFUSION_LICENSE_KEY",
-    "YOUR_SYNCFUSION_LICENSE_KEY"
-).strip()
-```
-
-## Run the Python Server
-
-From the project root, run:
-
-```powershell
-python app.py
-```
-
-The server starts at:
+Location:
 
 ```text
-http://127.0.0.1:5000/
+client/
 ```
 
-## Configure and Run the Vue Application
+See:
 
-In `frontend/src/App.vue`, set the service URL:
-
-```ts
-const serviceUrl: string = 'http://127.0.0.1:5000/';
+```text
+client/README.md
 ```
 
-Open another terminal and run:
+---
 
-```powershell
-cd frontend
-npm install
-npm run dev
+### ASP.NET Core Service
+
+Collaborative editing backend built using ASP.NET Core.
+
+Location:
+
+```text
+server/aspnet-core/
 ```
 
-Open the URL displayed in the terminal. Use the same room URL in multiple browser windows to test collaborative editing and Version History.
+See:
+
+```text
+server/aspnet-core/README.md
+```
+
+---
+
+### Python Service
+
+Collaborative editing backend built using Python and a .NET Spreadsheet wrapper.
+
+Location:
+
+```text
+server/python/
+```
+
+See:
+
+```text
+server/python/README.md
+```
+
+---
 
 ## Supported Features
 
-- Real-time collaborative Spreadsheet editing
-- Participant presence and selection synchronization
+### Collaborative Editing
+
+- Real-time workbook synchronization
+- Multi-user editing
+- Selection synchronization
+- Participant presence tracking
 - Late-join synchronization
-- Automatic Version History creation
+
+### Version History
+
+- Automatic version creation
+- Version listing
 - Historical workbook preview
 - Version download
-- Version restore and connected-user synchronization
+- Restore previous versions
+
+### Persistence
+
+- Workbook save support
+- Redis-backed action storage
+- Session state management
+
+---
+
+## Typical Setup Flow
+
+### Option 1: ASP.NET Core Backend
+
+Start the ASP.NET Core service:
+
+```text
+server/aspnet-core
+```
+
+Then configure the Vue client to use the ASP.NET Core endpoint.
+
+---
+
+### Option 2: Python Backend
+
+Build the .NET wrapper:
+
+```text
+server/python/NETStandardWrapperLibrary
+```
+
+Start the Python service:
+
+```text
+server/python
+```
+
+Then configure the Vue client to use the Python endpoint.
+
+---
+
+## License
+
+This sample requires a valid Syncfusion license key.
+
+For Syncfusion licensing information, visit:
+
+https://www.syncfusion.com/sales/products
