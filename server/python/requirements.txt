@@ -4,3 +4,4 @@ flask-sock
 eventlet
 pythonnet
 gunicorn
+redis

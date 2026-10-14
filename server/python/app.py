@@ -1,15 +1,13 @@
 from flask import Flask, request, Response, send_file, send_from_directory
 import json
-import json as json_lib
-from flask_cors import CORS #import CORS from flask_cors
+from flask_cors import CORS
 from flask_sock import Sock
 
+import redis
 import os
-import os as _os  # alias used by the settings loader further down
-import sys as _sys
+import sys
 import traceback
 import uuid
-import datetime
 from io import BytesIO
 
 # ============================================================================
@@ -22,8 +20,8 @@ from io import BytesIO
 # will load even when a newer runtime is installed (the host picks the
 # highest matching version that's >= 10.0).
 # ============================================================================
-_os.environ.setdefault("PYTHONNET_RUNTIME", "coreclr")
-if not _os.environ.get("DOTNET_ROOT"):
+os.environ.setdefault("PYTHONNET_RUNTIME", "coreclr")
+if not os.environ.get("DOTNET_ROOT"):
     # Best-effort: pick the newest installed Microsoft.NETCore.App.
     _candidate = None
     for _base in (
@@ -36,21 +34,21 @@ if not _os.environ.get("DOTNET_ROOT"):
             _candidate = _base
             break
     if _candidate:
-        _os.environ["DOTNET_ROOT"] = _candidate
-_os.environ.setdefault("DOTNET_ROLL_FORWARD", "LatestMajor")
+        os.environ["DOTNET_ROOT"] = _candidate
+os.environ.setdefault("DOTNET_ROLL_FORWARD", "LatestMajor")
 
 # Pre-configure LD_LIBRARY_PATH on Linux for native library discovery (especially SkiaSharp)
 # This MUST run before CLR initialization to ensure native libraries are found when the runtime
 # loads managed assemblies that depend on native .so files (libSkiaSharp.so, libgdiplus, etc.)
-if _sys.platform.startswith("linux"):
+if sys.platform.startswith("linux"):
     # System graphics libraries that SkiaSharp and other rendering libraries depend on
     base_ld_paths = "/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu"
-    existing_ld = _os.environ.get("LD_LIBRARY_PATH", "").strip()
+    existing_ld = os.environ.get("LD_LIBRARY_PATH", "").strip()
     if existing_ld:
         new_ld = base_ld_paths + ":" + existing_ld
     else:
         new_ld = base_ld_paths
-    _os.environ["LD_LIBRARY_PATH"] = new_ld
+    os.environ["LD_LIBRARY_PATH"] = new_ld
     print(f"[app] Pre-configured LD_LIBRARY_PATH for Linux: {new_ld[:120]}...", flush=True)
 
 # Import clr AFTER the env-var setup above.
@@ -64,15 +62,84 @@ static_url_path=''
 
 sock = Sock(app)
 
+# ============================================================================
+# Redis Configuration
+# ============================================================================
+
+def load_application_settings():
+    settings_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "appsettings.json"
+    )
+
+    if not os.path.isfile(settings_path):
+        raise FileNotFoundError(
+            f"Configuration file was not found: {settings_path}"
+        )
+
+    with open(settings_path, "r", encoding="utf-8") as settings_file:
+        return json.load(settings_file)
+
+
+def create_redis_client():
+    application_settings = load_application_settings()
+    redis_settings = application_settings.get("Redis", {})
+
+    redis_host = str(
+        redis_settings.get("Host", "")
+    ).strip()
+    redis_port = int(
+        redis_settings.get("Port", 6379)
+    )
+    redis_password = str(
+        redis_settings.get("Password", "")
+    ).strip()
+    redis_ssl = bool(
+        redis_settings.get("Ssl", False)
+    )
+
+    if not redis_host or redis_host == "YOUR_REDIS_HOST":
+        raise RuntimeError(
+            "Configure Redis.Host in appsettings.json."
+        )
+
+    if redis_password == "YOUR_REDIS_ACCESS_KEY":
+        raise RuntimeError(
+            "Configure Redis.Password in appsettings.json."
+        )
+
+    client = redis.Redis(
+        host=redis_host,
+        port=redis_port,
+        password=redis_password or None,
+        ssl=redis_ssl,
+        decode_responses=True,
+        socket_connect_timeout=10,
+        socket_timeout=10,
+        health_check_interval=30
+    )
+
+    client.ping()
+
+    print(
+        f"[Redis] Connected to {redis_host}:{redis_port}",
+        flush=True
+    )
+
+    return client
+
+
+redis_client = create_redis_client()
+
 # ---- Minimal CORS + large-file support ----
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024 # 500 MB
 app.config['MAX_FORM_MEMORY_SIZE'] = 500 * 1024 * 1024 # 500 MB
 
 # ============================================================================
-# Sub-path support for SPA routing (e.g., load balancer path remapping)
+# Sub-path support for GCP Load Balancer path mapping
 # ============================================================================
 # When deployed behind a load balancer with path mapping, the application
-# can still be accessed at both the root path (/) and a sub-path. This is
+# can be accessed at both the root path (/) and the sub-path. This is
 # controlled via the BASE_PATH environment variable.
 # ============================================================================
 BASE_PATH = os.environ.get('BASE_PATH', '').rstrip('/')
@@ -93,12 +160,31 @@ rooms = {}
 
 room_selections = {}
 
+# ============================================================================
+# Collaboration Redis Constants
+# ============================================================================
+
+VERSION_INFO_SUFFIX = "_versioninfo"
+REVISION_INFO_SUFFIX = "_revisioninfo"
+ACTIONS_TO_REMOVE_SUFFIX = "_actionstoremove"
+
+SAVE_THRESHOLD = 5
+
 CORS(
     app,
     resources={r"/*": {"origins": "*"}},
     supports_credentials=False,
     expose_headers=["Content-Disposition", "Content-Length", "Content-Type"],
 )
+
+try:
+    redis_client.ping()
+
+    print("[REDIS] Connected successfully")
+
+except Exception as ex:
+
+    print(f"[REDIS] Connection failed: {ex}")
 
 # Force CORS headers on EVERY response (including 413/500 errors)
 @app.after_request
@@ -119,8 +205,8 @@ current_working_directory = os.getcwd()
 
 # Try multiple possible publish locations, in order of preference:
 #   1. net10.0/publish/           (preferred — matches our target framework)
-#   2. net10.0/linux-x64/publish/ (Linux RID-specific)
-#   3. Last resort: use candidate_a even if it doesn't exist yet
+#   2. netstandard2.0/publish/    (fallback — compatible but older)
+#   3. Current directory           (last resort — some Docker layouts flatten here)
 _publish_candidate_a = os.path.join(
     current_working_directory,
     "NETStandardWrapperLibrary/WebServiceLibrary/bin/Release/net10.0/publish/"
@@ -128,6 +214,10 @@ _publish_candidate_a = os.path.join(
 _publish_candidate_b = os.path.join(
     current_working_directory,
     "NETStandardWrapperLibrary/WebServiceLibrary/bin/Release/net10.0/linux-x64/publish/"
+)
+_publish_candidate_c = os.path.join(
+    current_working_directory,
+    "NETStandardWrapperLibrary/WebServiceLibrary/runtimes/"
 )
 
 # Use the first candidate that exists
@@ -138,15 +228,25 @@ for candidate in [_publish_candidate_a, _publish_candidate_b]:
         break
 
 if not publish_base:
-    # Last resort: use candidate_a even if it doesn't exist yet
-    publish_base = _publish_candidate_a
+    # Fallback to candidate_c if primary locations don't exist
+    if os.path.isdir(_publish_candidate_c):
+        publish_base = _publish_candidate_c
+    else:
+        # Last resort: use candidate_a even if it doesn't exist yet
+        publish_base = _publish_candidate_a
 
 print(f"[app] Using publish base: {publish_base}", flush=True)
 
 files_root = os.path.join(current_working_directory, "Files")
+data_root = os.path.join(files_root, "Data")
+OUTPUT_DIRECTORY = os.path.join(files_root, "Output")
 
-# Make sure the Files directory exists (idempotent).
-os.makedirs(files_root, exist_ok=True)
+# Immutable sample workbook (never overwritten)
+SAMPLE_WORKBOOK = os.path.join(data_root, "Sample.xlsx")
+
+# Make sure the runtime folders exist (idempotent).
+os.makedirs(data_root, exist_ok=True)
+os.makedirs(OUTPUT_DIRECTORY, exist_ok=True)
 
 # ============================================================================
 # Load the .NET wrapper assemblies via pythonnet.
@@ -171,13 +271,13 @@ os.makedirs(files_root, exist_ok=True)
 runtimes_base = os.path.join(publish_base, "runtimes")
 
 native_search_dirs = []
-if _sys.platform.startswith("win"):
+if sys.platform.startswith("win"):
     # Windows: Check win-x64/native and root
     native_search_dirs = [
         os.path.join(runtimes_base, "win-x64", "native"),
         publish_base,
     ]
-elif _sys.platform.startswith("linux"):
+elif sys.platform.startswith("linux"):
     # Linux: Check linux-x64/native and root
     native_search_dirs = [
         os.path.join(runtimes_base, "linux-x64", "native"),
@@ -186,7 +286,7 @@ elif _sys.platform.startswith("linux"):
 
 # Add all found native directories to PATH (Windows) or LD_LIBRARY_PATH (Linux)
 # IMPORTANT: Build the full LD_LIBRARY_PATH BEFORE the loop to avoid overwriting
-if _sys.platform.startswith("linux"):
+if sys.platform.startswith("linux"):
     # Collect all native directories that exist
     found_native_dirs = []
     for native_dir in native_search_dirs:
@@ -211,37 +311,27 @@ if _sys.platform.startswith("linux"):
     print(f"[app]   - Added system graphics paths", flush=True)
     print(f"[app] Full LD_LIBRARY_PATH: {new_ld[:100]}...", flush=True)
 
-elif _sys.platform.startswith("win"):
+elif sys.platform.startswith("win"):
     # Windows: Add native directories to PATH
     for native_dir in native_search_dirs:
         if os.path.isdir(native_dir):
             os.environ["PATH"] = native_dir + os.pathsep + os.environ.get("PATH", "")
             print(f"[app] Added Windows native path: {native_dir}", flush=True)
 
-_sys.path.insert(0, publish_base)
+sys.path.insert(0, publish_base)
 print(f"[app] Added publish base to sys.path: {publish_base}", flush=True)
 
 _ASSEMBLY_NAMES = [
     "Syncfusion.EJ2.Spreadsheet",
-    "BitMiracle.LibTiff.NET",
+    "Syncfusion.XlsIO.Portable",
     "HarfBuzzSharp",
     "Newtonsoft.Json",
     "SkiaSharp",
     "SkiaSharp.HarfBuzz",
-    "Syncfusion.Compression.Portable",
     "Syncfusion.Licensing",
-    "Syncfusion.MetafileRenderer.Portable",
+    "Syncfusion.Compression.Portable",
     "Syncfusion.OfficeChart.Portable",
-    "Syncfusion.Pdf.Imaging.Portable",
-    "Syncfusion.Pdf.Portable",
     "Syncfusion.SkiaSharpHelper.Portable",
-    "Syncfusion.XlsIO.Portable",
-    "Syncfusion.XlsIORenderer.Portable",
-    # Syncfusion's EJ2 Spreadsheet does a literal Assembly.Load on the
-    # ASP.NET Core 2.3 Mvc facade. These come from the .csproj's
-    # PackageReference entries and are published into the same folder
-    # by `dotnet publish` — load them before WebServiceLibrary so the
-    # SpreadsheetEditor's Save() path resolves them.
     "Microsoft.AspNetCore.Mvc.Core",
     "Microsoft.AspNetCore.Mvc.Abstractions",
     "WebServiceLibrary",
@@ -253,15 +343,15 @@ for _name in _ASSEMBLY_NAMES:
         print(f"[app] [OK] Loaded {_name}", flush=True)
     except Exception as e:
         print(f"[app] [ERR] Failed to load {_name}: {e}", flush=True)
-        # Critical assemblies for spreadsheet functionality — fail fast
-        if _name in ("SkiaSharp", "Syncfusion.XlsIO.Portable", "Syncfusion.Pdf.Portable"):
-            print(f"[app] FATAL: {_name} is required for spreadsheet functionality!", flush=True)
+        # Critical assemblies for PDF export — fail fast
+        if _name in ("SkiaSharp", "Syncfusion.DocIORenderer.Portable", "Syncfusion.Pdf.Portable"):
+            print(f"[app] FATAL: {_name} is required for PDF export!", flush=True)
             raise
 
 # ============================================================================
 # Python-side imports from the C# wrapper namespace.
 # ============================================================================
-from WebServiceLibrary import SpreadsheetEditor
+from WebServiceLibrary import SpreadsheetEditor, SpreadsheetCollaborationWrapper
 from Syncfusion.EJ2.Spreadsheet import SaveSettings, SaveType
 from Syncfusion.Licensing import SyncfusionLicenseProvider
 from System import Enum
@@ -269,60 +359,22 @@ from System.IO import SeekOrigin
 
 # ---------------------------------------------------------------------------
 # Register the Syncfusion license
-LICENSE_KEY = _os.environ.get("SYNCFUSION_LICENSE_KEY", "")
+LICENSE_KEY = os.environ.get("SYNCFUSION_LICENSE_KEY", "")
 SyncfusionLicenseProvider.RegisterLicense(LICENSE_KEY)
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ----------
-#
-#     appsettings.json              — base settings (committed to git, OK to leave empty)
-#     appsettings.Development.json  — dev secrets (recommended: gitignored)
-# ---------------------------------------------------------------------------
-def _deep_merge(base, overlay):
-    """Recursively merge `overlay` into `base`.
+spreadEditor = SpreadsheetEditor()
+collabWrapper = SpreadsheetCollaborationWrapper()
 
-    Rules:
-      * Nested dicts are merged key-by-key.
-      * Empty / None values in the overlay are ignored (they don't
-        clobber a real value in the base).
-      * Non-empty scalars from the overlay replace the base value.
-    """
-    if isinstance(base, dict) and isinstance(overlay, dict):
-        for k, v in overlay.items():
-            if v is None or v == "":
-                # Empty overlay value: keep the base.
-                continue
-            if k in base and isinstance(base[k], dict) and isinstance(v, dict):
-                base[k] = _deep_merge(base[k], v)
-            else:
-                base[k] = v
-    return base
-
-def _load_settings():
-    settings = {}
-    base = os.path.join(current_working_directory, "appsettings.json")
-    dev  = os.path.join(current_working_directory, "appsettings.Development.json")
-    for path in (base, dev):
-        if os.path.isfile(path):
-            try:
-                with open(path, "r", encoding="utf-8-sig") as f:
-                    settings = _deep_merge(settings, json_lib.load(f))
-            except Exception as e:
-                print(f"[app] warning: failed to read {path}: {e}", flush=True)
-    return settings
-
-_settings = _load_settings()
-
-spreadEditor = SpreadsheetEditor()   # Spreadsheet wrapper
-
-# Validate that editor initialized correctly
 try:
     if not hasattr(spreadEditor, 'Open'):
         raise AttributeError("SpreadsheetEditor missing Open method")
-    print("[app] [OK] SpreadsheetEditor initialized successfully", flush=True)
+    if not hasattr(collabWrapper, 'ImportFile'):
+        raise AttributeError("SpreadsheetCollaborationWrapper missing ImportFile method")
+    if not hasattr(collabWrapper, 'ApplyCollaborativeActions'):
+        raise AttributeError("SpreadsheetCollaborationWrapper missing ApplyCollaborativeActions method")
+    print("[app] [OK] Spreadsheet wrappers initialized successfully", flush=True)
 except Exception as e:
-    print(f"[app] [ERR] Editor initialization failed: {e}", flush=True)
+    print(f"[app] [ERR] Wrapper initialization failed: {e}", flush=True)
     raise
 
 def send_message(ws, action, payload):
@@ -581,10 +633,38 @@ def collaboration(ws):
                     connection_id
                 )
 
-                # Cleanup empty room
+                # Cleanup empty room and perform final save
 
                 if len(rooms[room_name]) == 0:
                     del rooms[room_name]
+
+                    # Final save: include all remaining unsaved actions
+                    try:
+                        file_name = "Sample.xlsx"  # Default file name for final save
+                        
+                        # Retrieve all remaining unsaved actions (both active and threshold-selected)
+                        all_unsaved_actions = get_all_unsaved_actions(room_name)
+                        
+                        if all_unsaved_actions:
+                            # Temporarily store all unsaved actions for process_save_actions
+                            redis_client.delete(get_actions_to_remove_key(room_name))
+                            for action in all_unsaved_actions:
+                                redis_client.rpush(
+                                    get_actions_to_remove_key(room_name),
+                                    json.dumps(action)
+                                )
+                            
+                            process_save_actions(
+                                room_name,
+                                file_name,
+                                partial_save=False
+                            )
+                        else:
+                            # No unsaved actions, just clear records
+                            clear_records(room_name, partial_save=False)
+                        
+                    except Exception as ex:
+                        print(f"[WORKBOOK SAVE] Failed for room {room_name}: {ex}")
 
             sessions.pop(
                 connection_id,
@@ -594,6 +674,481 @@ def collaboration(ws):
         print(
             f"[WS] Disconnected: {connection_id}"
         )
+
+
+def sanitize_file_name(file_name):
+    """Prevent path traversal; return basename only."""
+    return os.path.basename(file_name) if file_name else "Sample.xlsx"
+
+def sanitize_room_name(room_name):
+    """Prevent path traversal; return safe room name."""
+    if not room_name:
+        return "default"
+    # Allow alphanumeric, dash, underscore only
+    import re
+    sanitized = re.sub(r'[^a-zA-Z0-9_-]', '', room_name)
+    return sanitized if sanitized else "default"
+
+def get_output_workbook_path(file_name):
+    """Get path to output workbook (shared across all rooms)."""
+    safe_file_name = sanitize_file_name(file_name)
+    
+    if not safe_file_name.lower().endswith(".xlsx"):
+        safe_file_name += ".xlsx"
+    
+    return os.path.join(
+        OUTPUT_DIRECTORY,
+        safe_file_name
+    )
+
+def get_source_workbook_path(file_name):
+    """Get source workbook: output if exists, else immutable Sample.xlsx."""
+    output_workbook_path = get_output_workbook_path(file_name)
+    
+    if os.path.isfile(output_workbook_path):
+        return output_workbook_path
+    
+    return SAMPLE_WORKBOOK
+
+def get_version_key(room_name):
+
+    return f"{room_name}{VERSION_INFO_SUFFIX}"
+
+
+def get_revision_key(room_name):
+
+    return f"{room_name}{REVISION_INFO_SUFFIX}"
+
+
+def get_action_remove_key(room_name):
+
+    return f"{room_name}{ACTIONS_TO_REMOVE_SUFFIX}"
+
+
+def get_room_version(room_name):
+
+    value = redis_client.get(
+        get_version_key(room_name)
+    )
+
+    return int(value or 0)
+
+
+def increment_room_version(room_name):
+
+    return redis_client.incr(
+        get_version_key(room_name)
+    )
+
+
+def save_action_to_redis(
+    room_name,
+    action
+):
+
+    redis_client.rpush(
+        room_name,
+        json.dumps(action)
+    )
+
+def get_action_count(
+    room_name
+):
+
+    return redis_client.llen(
+        room_name
+    )
+
+def get_pending_actions(
+    room_name,
+    start_index=0,
+    end_index=-1
+):
+
+    actions = redis_client.lrange(
+        room_name,
+        start_index,
+        end_index
+    )
+
+    return [
+        json.loads(item)
+        for item in actions
+    ]
+
+def get_pending_operations(
+    room_name,
+    start_index=0,
+    end_index=-1
+):
+
+    processing_actions = redis_client.lrange(
+        get_actions_to_remove_key(
+            room_name
+        ),
+        start_index,
+        end_index
+    )
+
+    active_actions = redis_client.lrange(
+        room_name,
+        start_index,
+        end_index
+    )
+
+    result = []
+
+    result.extend(
+        [
+            json.loads(item)
+            for item in processing_actions
+        ]
+    )
+
+    result.extend(
+        [
+            json.loads(item)
+            for item in active_actions
+        ]
+    )
+
+    return result
+
+def get_effective_pending_operations(
+    room_name,
+    client_version
+):
+
+    revision = get_room_revision(
+        room_name
+    )
+
+    effective_version = (
+        revision * SAVE_THRESHOLD
+    )
+
+    adjusted_version = (
+        client_version -
+        effective_version
+    )
+
+    if adjusted_version < 0:
+        return []
+
+    actions = redis_client.lrange(
+        room_name,
+        adjusted_version,
+        -1
+    )
+
+    return [
+        json.loads(action)
+        for action in actions
+    ]
+
+def get_actions_from_server(
+    room_name,
+    last_synced_version
+):
+
+    actions = get_effective_pending_operations(
+        room_name,
+        last_synced_version
+    )
+
+    actions = [
+        action
+        for action in actions
+        if action.get(
+            "version",
+            0
+        ) > last_synced_version
+    ]
+
+    actions.sort(
+        key=lambda x: x.get(
+            "version",
+            0
+        )
+    )
+
+    return actions
+
+
+def get_room_revision(
+    room_name
+):
+
+    value = redis_client.get(
+        get_revision_key(room_name)
+    )
+
+    return int(value or 0)
+
+def increment_room_revision(
+    room_name
+):
+
+    return redis_client.incr(
+        get_revision_key(room_name)
+    )
+
+def get_effective_version(
+    room_name
+):
+
+    revision = get_room_revision(
+        room_name
+    )
+
+    return revision * SAVE_THRESHOLD
+
+def get_actions_to_remove_key(
+    room_name
+):
+
+    return (
+        f"{room_name}"
+        f"{ACTIONS_TO_REMOVE_SUFFIX}"
+    )
+
+def process_action_threshold(
+    room_name
+):
+
+    length = redis_client.llen(
+        room_name
+    )
+
+    cache_limit = (
+        SAVE_THRESHOLD * 2
+    )
+
+    if length == 0:
+        return []
+
+    if length % cache_limit != 0:
+        return []
+
+    old_actions = redis_client.lrange(
+        room_name,
+        0,
+        SAVE_THRESHOLD - 1
+    )
+
+    if old_actions:
+
+        for action in old_actions:
+
+            redis_client.rpush(
+                get_actions_to_remove_key(
+                    room_name
+                ),
+                action
+            )
+
+    redis_client.ltrim(
+        room_name,
+        SAVE_THRESHOLD,
+        -1
+    )
+
+    revision = increment_room_revision(
+        room_name
+    )
+
+    print(
+        f"[REDIS] Revision "
+        f"incremented to {revision}"
+    )
+
+    print(
+        f"[REDIS] Moved "
+        f"{len(old_actions)} actions "
+        f"to actionstoremove"
+    )
+
+    return old_actions
+
+def get_actions_to_save(
+    room_name
+):
+
+    actions = redis_client.lrange(
+        get_actions_to_remove_key(
+            room_name
+        ),
+        0,
+        -1
+    )
+
+    return [
+        json.loads(action)
+        for action in actions
+    ]
+
+def get_actions_to_save_count(
+    room_name
+):
+
+    return redis_client.llen(
+        get_actions_to_remove_key(
+            room_name
+        )
+    )
+
+def get_room_actions_for_workbook(
+    room_name
+):
+
+    actions = []
+
+    actions.extend(
+        get_pending_operations(
+            room_name
+        )
+    )
+
+    return actions
+
+def get_all_unsaved_actions(room_name):
+    """
+    Retrieve every remaining unsaved action for the room.
+    
+    Combines:
+    - Active pending actions (main room action list)
+    - Threshold-selected actions (actions moved to actionstoremove queue)
+    
+    Deduplicates by server version and sorts by version ascending.
+    
+    Returns:
+    - List of all unsaved actions, deduplicated and sorted by version
+    """
+    try:
+        # Retrieve active pending actions from main room list
+        active_actions_raw = redis_client.lrange(room_name, 0, -1)
+        active_actions = [
+            json.loads(item) for item in (active_actions_raw or [])
+        ]
+    except Exception as e:
+        print(f"[SAVE] Error retrieving active actions for {room_name}: {e}")
+        active_actions = []
+    
+    try:
+        # Retrieve threshold-selected actions from actionstoremove queue
+        threshold_actions_raw = redis_client.lrange(
+            get_actions_to_remove_key(room_name), 0, -1
+        )
+        threshold_actions = [
+            json.loads(item) for item in (threshold_actions_raw or [])
+        ]
+    except Exception as e:
+        print(f"[SAVE] Error retrieving threshold actions for {room_name}: {e}")
+        threshold_actions = []
+    
+    # Combine both action collections
+    all_actions = active_actions + threshold_actions
+    
+    if not all_actions:
+        return []
+    
+    # Deduplicate by server version (unique key for each action)
+    seen_versions = set()
+    unique_actions = []
+    
+    for action in all_actions:
+        version = action.get("version")
+        if version is not None and version not in seen_versions:
+            seen_versions.add(version)
+            unique_actions.append(action)
+    
+    # Sort by server version ascending
+    unique_actions.sort(key=lambda a: a.get("version", 0))
+    
+    return unique_actions
+
+def clear_records(
+    room_name,
+    partial_save=False
+):
+
+    if not partial_save:
+
+        redis_client.delete(room_name)
+
+        redis_client.delete(
+            get_version_key(room_name)
+        )
+
+        redis_client.delete(
+            get_revision_key(room_name)
+        )
+
+    redis_client.delete(
+        get_actions_to_remove_key(
+            room_name
+        )
+    )
+
+def process_save_actions(
+    room_name,
+    file_name,
+    partial_save=True
+):
+    """Save actions to shared output workbook."""
+    actions = get_actions_to_save(room_name)
+
+    if not actions:
+        print(f"[WORKBOOK SAVE] No unsaved actions for room: {room_name}")
+        return True
+
+    # Get source workbook (output if exists, else immutable Sample.xlsx)
+    source_path = get_source_workbook_path(file_name)
+    if not os.path.isfile(source_path):
+        print(f"[WORKBOOK SAVE] Failed for room {room_name}: Source workbook not found at {source_path}")
+        return False
+
+    temp_path = None
+    try:
+        with open(source_path, "rb") as f:
+            workbook_bytes = f.read()
+
+        actions_json = json.dumps(actions)
+
+        # Apply actions via wrapper
+        updated_bytes = collabWrapper.ApplyCollaborativeActions(
+            workbook_bytes,
+            actions_json
+        )
+
+        # Save to temporary file first
+        target_path = get_output_workbook_path(file_name)
+        temp_path = target_path + ".tmp.xlsx"
+
+        print(f"[WORKBOOK SAVE] Room={room_name}, File={target_path}, Actions={len(actions)}")
+
+        with open(target_path, "wb") as f:
+            f.write(updated_bytes)
+
+        # Atomically replace (do not pre-delete target)
+        # os.replace(target_path, target_path)
+
+        # Clear only the saved actions
+        clear_records(room_name, partial_save)
+
+        print(f"[WORKBOOK SAVE] Saved: {target_path}")
+        return True
+
+    except Exception as ex:
+        print(f"[WORKBOOK SAVE] Failed for room {room_name}: {ex}")
+        # Clean up temp file if it exists
+        if temp_path:
+            try:
+                if os.path.exists(temp_path):
+                    os.remove(temp_path)
+            except:
+                pass
+        return False
 
 # ============================================================================
 # ---- Spreadsheet endpoints (existing — unchanged) -------------------------
@@ -667,6 +1222,8 @@ def saveExcel():
         return error_msg, 500
 
 
+
+
 @app.route(
     "/api/CollaborativeEditing/ImportFile",
     methods=["POST"]
@@ -681,70 +1238,42 @@ def import_file():
 
         request_data = request.get_json() or {}
 
-        file_name = (
-            request_data.get("fileName")
-            or "Sample.xlsx"
-        )
+        file_name = sanitize_file_name(request_data.get("fileName", "Sample.xlsx"))
+        room_name = sanitize_room_name(request_data.get("roomName", "default"))
 
-        room_name = (
-            request_data.get("roomName")
-            or "default"
-        )
+        print(f"[COLLAB] ImportFile File={file_name}, Room={room_name}")
 
-        print(
-            f"[COLLAB] ImportFile "
-            f"File={file_name}, "
-            f"Room={room_name}"
-        )
-
-        # Safe filename resolution
-        safe_name = os.path.basename(file_name)
-        
-        # Append .xlsx if no extension
-        if not safe_name.endswith(('.xlsx', '.xls', '.csv')):
-            safe_name = f"{safe_name}.xlsx"
-        
-        workbook_path = os.path.join(
-            files_root,
-            safe_name
-        )
-
-        if not os.path.exists(workbook_path):
-            error_payload = json.dumps({
-                "error": f"Workbook not found: {safe_name}"
-            })
-            return Response(
-                error_payload,
-                status=404,
-                mimetype="application/json"
+        # Get source workbook (output if exists, else immutable Sample.xlsx)
+        source_path = get_source_workbook_path(file_name)
+        if not os.path.isfile(source_path):
+            error_payload = json.dumps(
+                {"error": f"Workbook not found: {source_path}"}
             )
+            return Response(error_payload, status=404, mimetype='application/json')
 
-        with open(workbook_path, "rb") as file:
-            workbook_bytes = file.read()
+        with open(source_path, "rb") as f:
+            workbook_bytes = f.read()
 
-        sfdt = spreadEditor.Open(workbook_bytes)
+        # Get pending actions for this room
+        actions = get_room_actions_for_workbook(room_name)
+        actions_json = json.dumps(actions)
+        current_version = get_room_version(room_name)
 
-        response = {
-            "version": 0,
-            "sfdt": sfdt
-        }
+        # Apply actions and get Spreadsheet JSON
+        result_json = spreadEditor.OpenWithActions(
+            workbook_bytes,
+            actions_json
+        )
 
         return Response(
-            json.dumps(response),
+            result_json,
             mimetype="application/json"
         )
 
     except Exception as ex:
-
-        print(
-            f"[COLLAB] ImportFile Error: "
-            f"{str(ex)}"
-        )
-
+        print(f"[COLLAB] ImportFile Error: {str(ex)}")
         return Response(
-            json.dumps({
-                "error": str(ex)
-            }),
+            json.dumps({"error": str(ex)}),
             status=500,
             mimetype="application/json"
         )
@@ -782,8 +1311,105 @@ def update_action():
                 mimetype="application/json"
             )
 
-        # POC versioning
-        data["version"] = data.get("version", 0) + 1
+        version = increment_room_version(room_name)
+        data["version"] = version
+
+        print(
+            f"[REDIS] Room={room_name} "
+            f"Version={version}"
+        )
+        save_action_to_redis(
+            room_name,
+            data
+        )
+        moved_actions = (
+            process_action_threshold(
+                room_name
+            )
+        )
+
+        if moved_actions:
+
+            print(
+                f"[REDIS] "
+                f"Save queue size="
+                f"{len(moved_actions)}"
+            )
+            save_count = (
+                get_actions_to_save_count(
+                    room_name
+                )
+            )
+            file_name = sanitize_file_name(data.get("fileName", "Sample.xlsx"))
+            process_save_actions(
+                room_name,
+                file_name,
+                True
+            )
+            print(
+                redis_client.llen(
+                    get_actions_to_remove_key(
+                        room_name
+                    )
+                )
+            )
+
+            print(
+                f"[REDIS] ActionsToSave="
+                f"{save_count}"
+            )
+        
+        print(
+            redis_client.llen(
+                get_actions_to_remove_key(
+                    room_name
+                )
+            )
+        )
+
+        count = get_action_count(
+            room_name
+        )
+
+        print(
+            f"[REDIS] Room={room_name} "
+            f"Actions={count}"
+        )
+        pending_actions = (
+            get_pending_operations(
+                room_name
+            )
+        )
+
+        print(
+            f"[REDIS] PendingOperations="
+            f"{len(pending_actions)}"
+        )
+
+        effective_version = (
+            get_effective_version(
+                room_name
+            )
+        )
+        effective_actions = (
+            get_effective_pending_operations(
+                room_name,
+                data.get(
+                    "clientVersion",
+                    0
+                )
+            )
+        )
+
+        print(
+            f"[REDIS] EffectivePending="
+            f"{len(effective_actions)}"
+        )
+
+        print(
+            f"[REDIS] EffectiveVersion="
+            f"{effective_version}"
+        )
 
         # Broadcast to all other users in room
         connection_id = data.get("connectionId")
@@ -817,6 +1443,82 @@ def update_action():
             status=500,
             mimetype="application/json"
         )
+
+@app.route(
+    "/api/CollaborativeEditing/GetActionsFromServer",
+    methods=["POST"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/GetActionsFromServer",
+    methods=["POST"]
+)
+def get_actions_from_server_endpoint():
+
+    try:
+
+        data = request.get_json()
+
+        if not data:
+
+            return Response(
+                json.dumps([]),
+                mimetype="application/json"
+            )
+
+        room_name = data.get(
+            "roomName"
+        )
+
+        if not room_name:
+
+            return Response(
+                json.dumps([]),
+                mimetype="application/json"
+            )
+
+        last_synced_version = int(
+            data.get(
+                "version",
+                0
+            )
+        )
+
+        actions = (
+            get_actions_from_server(
+                room_name,
+                last_synced_version
+            )
+        )
+
+        print(
+            f"[COLLAB] "
+            f"GetActionsFromServer "
+            f"Room={room_name} "
+            f"Version={last_synced_version} "
+            f"Returned={len(actions)}"
+        )
+
+        return Response(
+            json.dumps(actions),
+            mimetype="application/json"
+        )
+
+    except Exception as ex:
+
+        print(
+            f"[COLLAB] "
+            f"GetActionsFromServer Error: "
+            f"{str(ex)}"
+        )
+
+        return Response(
+            json.dumps({
+                "error": str(ex)
+            }),
+            status=500,
+            mimetype="application/json"
+        )
+
 
 @app.route(
     "/api/CollaborativeEditing/UpdateSelection",
@@ -873,11 +1575,9 @@ def update_selection():
         )
 
     except Exception as ex:
-
         print(
             f"[COLLAB] UpdateSelection Error: {ex}"
         )
-
         return Response(
             json.dumps({
                 "error": str(ex)
@@ -886,18 +1586,24 @@ def update_selection():
             mimetype="application/json"
         )
 
-# ---- Static Data --------------------------------------------------------
-# Serve static files (JSON, etc.) from the Files directory.
+
+
+
+
+
+# ---- Static Data (catalog + common-fields) --------------------------------
+# Mirrors wwwroot/Data in the C# project so the client can fetch them
+# directly as plain JSON. Useful as a debugging escape hatch.
 @app.route("/Data/<path:filename>", methods=["GET"])
 @app.route(f'{BASE_PATH}/Data/<path:filename>', methods=["GET"])
 def serve_data(filename):
-    """Serve static files for debugging."""
+    """Serve catalog / common-fields JSON for debugging."""
     if ".." in filename or filename.startswith("/"):
         return Response("Forbidden", status=403)
-    target = os.path.join(files_root, filename)
+    target = os.path.join(data_root, filename)
     if not os.path.isfile(target):
         return Response("Not found", status=404)
-    return send_from_directory(files_root, filename, as_attachment=False)
+    return send_from_directory(data_root, filename, as_attachment=False)
 
 @app.route("/LicenseKey", methods=["GET"])
 @app.route(f'{BASE_PATH}/LicenseKey', methods=["GET"])
@@ -905,25 +1611,32 @@ def license_key():
     # Lets the frontend register the key at runtime from the Azure app setting.
     return Response(LICENSE_KEY, mimetype="text/plain")
 
+@app.route("/health", methods=["GET"])
+@app.route(f'{BASE_PATH}/health', methods=["GET"])
+def health_check():
+    """Health check endpoint for deployment verification."""
+    try:
+        redis_client.ping()
+        return Response(
+            json.dumps({"status": "healthy", "redis": "connected"}),
+            status=200,
+            mimetype="application/json"
+        )
+    except Exception as ex:
+        return Response(
+            json.dumps({"status": "unhealthy", "error": str(ex)}),
+            status=503,
+            mimetype="application/json"
+        )
+
 # ---------------------------------------------------------------------------
 # SPA Root Routes (serve index.html for both root and sub-path)
-# ============================================================================
-# Flask's send_static_file('index.html') returns the frontend's index.html,
-# which the browser then loads with script tags like:
-#   <script src="/vue-spreadsheet-docx-mail-merge/assets/main.js"></script>
-#   (when VITE_APP_BASE_PATH was set during the frontend build)
-#
-# When accessed at the sub-path, Flask's SPA routing must also catch requests
-# like /vue-spreadsheet-docx-mail-merge/ and return index.html. This allows
-# the Vue Router (or simple SPA history) to handle all routes at the correct
-# base path.
 # ============================================================================
 @app.route("/")
 def home():
     return app.send_static_file("index.html")
 
-# If BASE_PATH is set (e.g., /vue-spreadsheet-docx-mail-merge),
-# also serve index.html at that path and its trailing-slash variant
+# If BASE_PATH is set, also serve index.html at that path
 if BASE_PATH:
     @app.route(f"{BASE_PATH}/", methods=["GET"])
     def home_subpath_trailing():
@@ -931,58 +1644,16 @@ if BASE_PATH:
     
     @app.route(f"{BASE_PATH}", methods=["GET"])
     def home_subpath_notrailing():
-        # Redirect /vue-spreadsheet-docx-mail-merge → /vue-spreadsheet-docx-mail-merge/
-        # This ensures consistency with how the frontend's Vite build references assets
         from flask import redirect
         return redirect(f"{BASE_PATH}/", code=307)
     
-    # ========================================================================
-    # Serve static assets from the base path
-    # ========================================================================
-    # When VITE_APP_BASE_PATH is set, Vite builds assets to be served from:
-    #   /vue-spreadsheet-docx-mail-merge/assets/main.js
-    # 
-    # This route catches ALL requests to /vue-spreadsheet-docx-mail-merge/<path>
-    # and serves the corresponding static file from frontend/dist/<path>
-    # ========================================================================
     @app.route(f"{BASE_PATH}/<path:filepath>", methods=["GET"])
     def serve_static_subpath(filepath):
-        """
-        Serve static files (CSS, JS, images, etc.) from the sub-path.
-        
-        Examples:
-          /vue-spreadsheet-docx-mail-merge/assets/main.js → frontend/dist/assets/main.js
-          /vue-spreadsheet-docx-mail-merge/assets/main.css → frontend/dist/assets/main.css
-          /vue-spreadsheet-docx-mail-merge/favicon.ico → frontend/dist/favicon.ico
-        """
-        # Attempt to serve the file from the static directory
+        """Serve static files from the sub-path."""
         try:
             return app.send_static_file(filepath)
         except:
-            # If file doesn't exist, return index.html (for SPA routing)
-            # This allows Vue Router to handle navigation
             return app.send_static_file("index.html")
-
-    # ========================================================================
-    # Architecture: All API endpoints are at ROOT paths only
-    # ========================================================================
-    # The frontend uses absolute paths (starting with /) for all API calls:
-    # - fetch('/Open')
-    # - fetch('/api/CollaborativeEditing/ImportFile')
-    # - fetch('/LicenseKey')
-    # 
-    # The SPA base path is handled by:
-    # - Vite build time: VITE_APP_BASE_PATH
-    # - Docker build: --build-arg VITE_APP_BASE_PATH
-    # - Load balancer: URL rewriting
-    #
-    # This ensures:
-    # ✅ Works locally at root (/)
-    # ✅ Works locally at sub-path
-    # ✅ Works on Azure at root and sub-path
-    # ========================================================================
-    print(f"[app] Using clean architecture: All API endpoints at root paths", flush=True)
-    print(f"[app] SPA served at: {BASE_PATH} (via Vite base path)", flush=True)
 
 if __name__ == "__main__":
     # threaded=True so large uploads don't block the dev server

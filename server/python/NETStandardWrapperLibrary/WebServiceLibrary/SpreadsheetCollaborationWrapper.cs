@@ -202,5 +202,72 @@ namespace WebServiceLibrary
                 return stream.ToArray();
             }
         }
+
+        /// <summary>
+        /// Applies actions to a workbook and returns updated XLSX bytes.
+        /// 
+        /// Deserializes actionsJson into List&lt;ActionInfo&gt;, sorts by Version,
+        /// applies each via CollaborativeEditingHandler.UpdateAction, and returns
+        /// the updated workbook as XLSX bytes.
+        /// 
+        /// Parameters:
+        /// - workbookBytes: XLSX workbook as byte array
+        /// - actionsJson: JSON array of ActionInfo objects, or null/empty/"[]" for no actions
+        /// 
+        /// Returns:
+        /// - Updated XLSX workbook as byte array
+        /// 
+        /// Throws:
+        /// - ArgumentNullException if workbookBytes is null or empty
+        /// - InvalidOperationException if processing fails
+        /// </summary>
+        public byte[] ApplyCollaborativeActions(byte[] workbookBytes, string actionsJson)
+        {
+            if (workbookBytes == null || workbookBytes.Length == 0)
+            {
+                throw new ArgumentNullException(nameof(workbookBytes), "Workbook bytes cannot be null or empty");
+            }
+
+            // Treat null, empty, whitespace, or "[]" as no actions
+            if (string.IsNullOrWhiteSpace(actionsJson) || actionsJson.Trim() == "[]")
+            {
+                return workbookBytes;
+            }
+
+            try
+            {
+                // Deserialize actions into List<ActionInfo>
+                List<ActionInfo> actions = JsonConvert.DeserializeObject<List<ActionInfo>>(actionsJson);
+
+                if (actions == null || actions.Count == 0)
+                {
+                    return workbookBytes;
+                }
+
+                // Remove null actions
+                actions = actions.Where(a => a != null).ToList();
+
+                if (actions.Count == 0)
+                {
+                    return workbookBytes;
+                }
+
+                // Sort by Version
+                actions = actions.OrderBy(a => a.Version).ToList();
+
+                // Apply actions to workbook
+                return ApplyActionsToWorkbook(workbookBytes, actions);
+            }
+            catch (JsonException ex)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to deserialize actions JSON: {ex.Message}", ex);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"Failed to apply collaborative actions: {ex.Message}", ex);
+            }
+        }
     }
 }
