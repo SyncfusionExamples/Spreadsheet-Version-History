@@ -369,7 +369,6 @@ _ASSEMBLY_NAMES = [
     "SkiaSharp.HarfBuzz",
     "Syncfusion.Licensing",
     "Syncfusion.Compression.Portable",
-    "Syncfusion.OfficeChart.Portable",
     "Syncfusion.SkiaSharpHelper.Portable",
     "Microsoft.AspNetCore.Mvc.Core",
     "Microsoft.AspNetCore.Mvc.Abstractions",
@@ -398,20 +397,12 @@ from System.IO import SeekOrigin
 
 # ---------------------------------------------------------------------------
 # Register the Syncfusion license
-LICENSE_KEY = os.environ.get(
-    "SYNCFUSION_LICENSE_KEY",
-    ""
-).strip()
+LICENSE_KEY = os.environ.get("SYNCFUSION_LICENSE_KEY", "YOUR_SYNCFUSION_LICENSE_KEY").strip()
 
 if not LICENSE_KEY:
-    raise RuntimeError(
-        "Configure the SYNCFUSION_LICENSE_KEY "
-        "environment variable."
-    )
+    raise RuntimeError("Configure the SYNCFUSION_LICENSE_KEY environment variable.")
 
-SyncfusionLicenseProvider.RegisterLicense(
-    LICENSE_KEY
-)
+SyncfusionLicenseProvider.RegisterLicense(LICENSE_KEY)
 
 spreadEditor = SpreadsheetEditor()
 collabWrapper = SpreadsheetCollaborationWrapper()
@@ -730,6 +721,24 @@ def collaboration(ws):
                             flush=True
                         )
 
+            # Clean up user selection
+            if room_name:
+                selections = room_selections.get(
+                    room_name
+                )
+
+                if selections:
+                    selections.pop(
+                        connection_id,
+                        None
+                    )
+
+                    if not selections:
+                        room_selections.pop(
+                            room_name,
+                            None
+                        )
+
             sessions.pop(
                 connection_id,
                 None
@@ -829,6 +838,108 @@ def get_version_workbook_path(
         get_version_room_directory(room_name),
         f"{safe_version_id}.xlsx"
     )
+
+
+CURRENT_WORKBOOK_NAME = "Current.xlsx"
+
+
+def get_room_current_workbook_path(room_name):
+    """Get path to room's current restored workbook."""
+    return os.path.join(
+        get_version_room_directory(room_name),
+        CURRENT_WORKBOOK_NAME
+    )
+
+
+CURRENT_VERSION_NAME = "Current.version"
+
+
+def get_room_current_version_path(room_name):
+    """Get path to room's baseline version tracker."""
+    return os.path.join(
+        get_version_room_directory(room_name),
+        CURRENT_VERSION_NAME
+    )
+
+
+def get_room_active_baseline_path(room_name):
+    """Get the active baseline workbook for a room."""
+    current_workbook_path = (
+        get_room_current_workbook_path(room_name)
+    )
+
+    if is_valid_xlsx_file(
+        current_workbook_path
+    ):
+        return current_workbook_path
+
+    if not is_valid_xlsx_file(
+        SAMPLE_WORKBOOK
+    ):
+        raise RuntimeError(
+            "The immutable Sample.xlsx file "
+            "is missing or invalid."
+        )
+
+    return SAMPLE_WORKBOOK
+
+
+def read_room_baseline_version(room_name):
+    """Read the baseline version for a room."""
+    version_path = (
+        get_room_current_version_path(
+            room_name
+        )
+    )
+
+    if not os.path.isfile(version_path):
+        return 0
+
+    try:
+        with open(
+            version_path,
+            "r",
+            encoding="utf-8"
+        ) as version_file:
+            return int(
+                version_file.read().strip()
+                or 0
+            )
+    except (
+        OSError,
+        TypeError,
+        ValueError
+    ):
+        return 0
+
+
+def write_room_baseline_version(
+    room_name,
+    version
+):
+    """Write the baseline version for a room."""
+    version_path = (
+        get_room_current_version_path(
+            room_name
+        )
+    )
+
+    temporary_path = version_path + ".tmp"
+
+    with open(
+        temporary_path,
+        "w",
+        encoding="utf-8"
+    ) as version_file:
+        version_file.write(
+            str(int(version))
+        )
+
+    os.replace(
+        temporary_path,
+        version_path
+    )
+
 
 def get_version_key(room_name):
 
@@ -1188,6 +1299,38 @@ def get_all_unsaved_actions(room_name):
     return unique_actions
 
 
+def get_actions_between_versions(
+    room_name,
+    start_version,
+    target_version
+):
+    """Get actions where start_version < version <= target_version."""
+    actions = get_pending_operations(
+        room_name,
+        0,
+        -1
+    ) or []
+
+    filtered_actions = [
+        action
+        for action in actions
+        if (
+            int(action.get("version", 0))
+            > int(start_version)
+            and
+            int(action.get("version", 0))
+            <= int(target_version)
+        )
+    ]
+
+    filtered_actions.sort(
+        key=lambda action:
+            int(action.get("version", 0))
+    )
+
+    return filtered_actions
+
+
 def read_version_history(room_name):
     """Read version history metadata for a room."""
     metadata_path = get_version_metadata_path(
@@ -1294,6 +1437,73 @@ def normalize_spreadsheet_actions(actions):
     return actions
 
 
+def get_version_action_name(action_data):
+    """Extract action name from nested action structure."""
+    if not isinstance(action_data, dict):
+        return "Workbook changed"
+
+    direct_action = (
+        action_data.get("action")
+        or action_data.get("requestType")
+        or action_data.get("actionType")
+    )
+
+    if isinstance(direct_action, str) \
+            and direct_action.strip():
+        return direct_action.strip()
+
+    operations = action_data.get("operations")
+
+    if isinstance(operations, list):
+        for operation in operations:
+            if not isinstance(operation, dict):
+                continue
+
+            operation_action = (
+                operation.get("action")
+                or operation.get("requestType")
+                or operation.get("actionType")
+            )
+
+            if (
+                isinstance(operation_action, str)
+                and operation_action.strip()
+            ):
+                return operation_action.strip()
+
+    action_payload = action_data.get("data")
+
+    if isinstance(
+        action_payload,
+        str
+    ) and action_payload.strip():
+        try:
+            action_payload = json.loads(
+                action_payload
+            )
+        except json.JSONDecodeError:
+            action_payload = None
+
+    if isinstance(action_payload, dict):
+        nested_action = get_version_action_name(
+            action_payload
+        )
+
+        if nested_action != "Workbook changed":
+            return nested_action
+
+    if isinstance(action_payload, list):
+        for payload_item in action_payload:
+            nested_action = get_version_action_name(
+                payload_item
+            )
+
+            if nested_action != "Workbook changed":
+                return nested_action
+
+    return "Workbook changed"
+
+
 def create_automatic_version(
     room_name,
     file_name,
@@ -1322,8 +1532,14 @@ def create_automatic_version(
         if duplicate:
             return None
 
-        source_path = get_source_workbook_path(
-            file_name
+        source_path = get_room_active_baseline_path(
+            room_name
+        )
+
+        baseline_version = (
+            read_room_baseline_version(
+                room_name
+            )
         )
 
         if not os.path.isfile(source_path):
@@ -1337,8 +1553,9 @@ def create_automatic_version(
         ) as workbook_file:
             workbook_bytes = workbook_file.read()
 
-        actions = get_actions_through_version(
+        actions = get_actions_between_versions(
             room_name,
+            baseline_version,
             collaboration_version
         )
 
@@ -1346,6 +1563,16 @@ def create_automatic_version(
             normalize_spreadsheet_actions(actions)
             if actions
             else []
+        )
+
+        print(
+            "[VERSION HISTORY] "
+            f"Room={room_name}, "
+            f"Baseline={source_path}, "
+            f"BaselineVersion={baseline_version}, "
+            f"TargetVersion={collaboration_version}, "
+            f"Actions={len(actions)}",
+            flush=True
         )
 
         snapshot_bytes = (
@@ -1469,7 +1696,7 @@ def process_save_actions(
             f"No unsaved actions for room: {room_name}"
         )
         return True
-
+    
     source_path = get_source_workbook_path(
         file_name
     )
@@ -1499,12 +1726,10 @@ def process_save_actions(
                 actions_json
             )
         )
-
+        python_bytes = bytes(updated_bytes)
         target_path = get_output_workbook_path(
             file_name
         )
-
-        temp_path = target_path + ".tmp.xlsx"
 
         print(
             f"[WORKBOOK SAVE] "
@@ -1514,15 +1739,10 @@ def process_save_actions(
         )
 
         with open(
-            temp_path,
+            target_path,
             "wb"
         ) as temp_file:
-            temp_file.write(updated_bytes)
-
-        os.replace(
-            temp_path,
-            target_path
-        )
+            temp_file.write(python_bytes)
 
         clear_records(
             room_name,
@@ -1542,13 +1762,6 @@ def process_save_actions(
             f"Failed for room {room_name}: "
             f"{exception}"
         )
-
-        if temp_path:
-            try:
-                if os.path.exists(temp_path):
-                    os.remove(temp_path)
-            except Exception:
-                pass
 
         return False
 
@@ -1640,31 +1853,88 @@ def import_file():
 
         request_data = request.get_json() or {}
 
-        file_name = sanitize_file_name(request_data.get("fileName", "Sample.xlsx"))
-        room_name = sanitize_room_name(request_data.get("roomName", "default"))
+        file_name = sanitize_file_name(
+            request_data.get(
+                "fileName",
+                "Sample.xlsx"
+            )
+        )
+        room_name = sanitize_room_name(
+            request_data.get("roomName", "default")
+        )
 
-        print(f"[COLLAB] ImportFile File={file_name}, Room={room_name}")
+        source_path = (
+            get_room_active_baseline_path(
+                room_name
+            )
+        )
 
-        # Get source workbook (output if exists, else immutable Sample.xlsx)
-        source_path = get_source_workbook_path(file_name)
+        baseline_version = (
+            read_room_baseline_version(
+                room_name
+            )
+        )
+
+        print(
+            "[COLLAB] Import "
+            f"Room={room_name}, "
+            f"Baseline={source_path}, "
+            f"BaselineVersion={baseline_version}"
+        )
+
         if not os.path.isfile(source_path):
             error_payload = json.dumps(
-                {"error": f"Workbook not found: {source_path}"}
+                {
+                    "error":
+                        f"Workbook not found: "
+                        f"{source_path}"
+                }
             )
-            return Response(error_payload, status=404, mimetype='application/json')
 
-        with open(source_path, "rb") as f:
-            workbook_bytes = f.read()
+            return Response(
+                error_payload,
+                status=404,
+                mimetype='application/json'
+            )
 
-        # Get pending actions for this room
-        actions = get_room_actions_for_workbook(room_name)
-        actions_json = json.dumps(actions)
-        current_version = get_room_version(room_name)
+        with open(
+            source_path,
+            "rb"
+        ) as workbook_file:
+            workbook_bytes = workbook_file.read()
 
-        # Apply actions and get Spreadsheet JSON
-        result_json = spreadEditor.OpenWithActions(
-            workbook_bytes,
-            actions_json
+        pending_actions = [
+            action
+            for action in (
+                get_room_actions_for_workbook(
+                    room_name
+                ) or []
+            )
+            if int(
+                action.get("version", 0)
+            ) > int(baseline_version)
+        ]
+
+        pending_actions.sort(
+            key=lambda a: a.get("version", 0)
+        )
+
+        print(
+            "[COLLAB] Import "
+            f"Room={room_name}, "
+            f"PendingActions="
+            f"{len(pending_actions)}"
+        )
+
+        actions_json = json.dumps(
+            pending_actions
+        )
+
+        result_json = (
+            spreadEditor.OpenWithActions(
+                workbook_bytes,
+                actions_json
+            )
         )
 
         return Response(
@@ -1673,7 +1943,11 @@ def import_file():
         )
 
     except Exception as ex:
-        print(f"[COLLAB] ImportFile Error: {str(ex)}")
+        print(
+            f"[COLLAB] ImportFile Error: "
+            f"{str(ex)}"
+        )
+
         return Response(
             json.dumps({"error": str(ex)}),
             status=500,
@@ -1875,25 +2149,41 @@ def update_action():
 
         # Create automatic version after successful action processing
         try:
-            file_name = sanitize_file_name(data.get("fileName", "Sample.xlsx"))
+            file_name = sanitize_file_name(
+                data.get(
+                    "fileName",
+                    "Sample.xlsx"
+                )
+            )
             current_user = (
                 data.get("currentUser")
                 or data.get("userId")
                 or room_action_users.get(room_name)
                 or "Guest User"
             )
-            collaboration_version = data.get("version", 0)
-            action_name = (
-                data.get("action")
-                or data.get("requestType")
-                or "Workbook changed"
+            collaboration_version = data.get(
+                "version",
+                0
+            )
+
+            action_name = get_version_action_name(
+                data
+            )
+
+            print(
+                "[VERSION HISTORY] "
+                f"Version={collaboration_version}, "
+                f"Action={action_name}",
+                flush=True
             )
 
             version_info = create_automatic_version(
                 room_name=room_name,
                 file_name=file_name,
                 current_user=current_user,
-                collaboration_version=collaboration_version,
+                collaboration_version=int(
+                    collaboration_version
+                ),
                 action_name=action_name
             )
 
@@ -2365,22 +2655,32 @@ def restore_version():
             None
         )
 
-        file_name = (
-            version_info.get(
-                "fileName",
-                "Sample.xlsx"
+        if not version_info:
+            return Response(
+                json.dumps({
+                    "error":
+                        "Version metadata "
+                        "not found."
+                }),
+                status=404,
+                mimetype="application/json"
             )
-            if version_info
-            else "Sample.xlsx"
+
+        current_workbook_path = (
+            get_room_current_workbook_path(
+                room_name
+            )
         )
 
-        output_path = get_output_workbook_path(
-            file_name
+        temporary_path = (
+            current_workbook_path
+            + ".restore.tmp.xlsx"
         )
-        temporary_path = output_path + ".restore.tmp"
 
         os.makedirs(
-            os.path.dirname(output_path),
+            os.path.dirname(
+                current_workbook_path
+            ),
             exist_ok=True
         )
 
@@ -2391,7 +2691,27 @@ def restore_version():
 
         os.replace(
             temporary_path,
-            output_path
+            current_workbook_path
+        )
+
+        collaboration_version = (
+            version_info.get(
+                "collaborationVersion",
+                0
+            )
+        )
+
+        write_room_baseline_version(
+            room_name,
+            collaboration_version
+        )
+
+        print(
+            "[VERSION HISTORY] "
+            f"Restored Room={room_name}, "
+            f"Version={collaboration_version}, "
+            f"File={current_workbook_path}",
+            flush=True
         )
 
         clear_room_collaboration_records(
@@ -2429,18 +2749,14 @@ def restore_version():
                 "roomName": room_name,
                 "versionId": version_id,
                 "restoreRevision":
-                    restore_information["revision"],
+                    restore_information[
+                        "revision"
+                    ],
                 "restoredBy":
-                    restore_information["restoredBy"]
+                    restore_information[
+                        "restoredBy"
+                    ]
             }
-        )
-
-        print(
-            f"[VERSION HISTORY] "
-            f"RestoreVersion: Room={room_name}, "
-            f"VersionId={version_id}, "
-            f"RestoredBy={restored_by}",
-            flush=True
         )
 
         return Response(
@@ -2564,6 +2880,78 @@ def update_selection():
         )
 
 
+@app.route(
+    "/api/CollaborativeEditing/"
+    "GetRoomSelections/<room_name>",
+    methods=["GET"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/"
+    "GetRoomSelections/<room_name>",
+    methods=["GET"]
+)
+def get_room_selections(room_name):
+    """Retrieve all participant selections for a room."""
+    selections = list(
+        room_selections.get(
+            room_name,
+            {}
+        ).values()
+    )
+
+    return Response(
+        json.dumps(selections),
+        status=200,
+        mimetype="application/json"
+    )
+
+
+@app.route(
+    "/api/CollaborativeEditing/RemoveUserSelection",
+    methods=["POST"]
+)
+@app.route(
+    f"{BASE_PATH}/api/CollaborativeEditing/"
+    "RemoveUserSelection",
+    methods=["POST"]
+)
+def remove_user_selection():
+    """Remove selection for a disconnected user."""
+    request_data = request.get_json(
+        silent=True
+    ) or {}
+
+    room_name = str(
+        request_data.get("roomName") or ""
+    ).strip()
+    connection_id = str(
+        request_data.get("connectionId") or ""
+    ).strip()
+
+    if room_name and connection_id:
+        selections = room_selections.get(
+            room_name
+        )
+
+        if selections:
+            selections.pop(
+                connection_id,
+                None
+            )
+
+            if not selections:
+                room_selections.pop(
+                    room_name,
+                    None
+                )
+
+    return Response(
+        json.dumps({
+            "success": True
+        }),
+        status=200,
+        mimetype="application/json"
+    )
 
 
 
