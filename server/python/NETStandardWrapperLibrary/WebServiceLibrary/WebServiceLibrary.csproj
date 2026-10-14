@@ -1,0 +1,48 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <!-- Publish runtime assets for Linux -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
+    <PublishSingleFile>false</PublishSingleFile>
+    <!-- Ensure SkiaSharp native assets are included -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- Linux runtime identifier so native assets resolve to runtimes/linux-x64/native -->
+    <RuntimeIdentifiers>linux-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" Version="8.3.1.2" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="4.153.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
+    <PackageReference Include="Syncfusion.EJ2.Spreadsheet.AspNet.Core" Version="35.1.37" />
+    <!--
+      The Syncfusion EJ2 Spreadsheet assembly was originally built
+      against the ASP.NET Core 2.3 facade. When Syncfusion.EJ2.Spreadsheet
+      runs Workbook.Save (used by the Python /Save endpoint) it does a
+      literal Assembly.Load on Microsoft.AspNetCore.Mvc.Core, Version=2.3.0.0,
+      which the modern .NET runtime does not satisfy. Pin the 2.3.0 packages
+      so NuGet restores them and dotnet publish drops the DLLs into the
+      publish output — keeping every clone/rebuild reproducible.
+    -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Core" Version="2.3.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Abstractions" Version="2.3.0" />
+  </ItemGroup>
+
+  <!--
+    Force the publish output to include a runtimeconfig.json so the
+    .NET host (and pythonnet's coreclr runtime) knows this DLL is
+    net10.0 and not a netstandard facade. Without this, pythonnet tries
+    to resolve System.IO.Stream against System.Runtime v4.0.0.0 and
+    fails with TypeLoadException on every type that has Stream in its
+    signature (e.g. SpreadsheetEditor.Save).
+  -->
+  <ItemGroup>
+    <None Include="WebServiceLibrary.runtimeconfig.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <CopyToPublishDirectory>PreserveNewest</CopyToPublishDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
