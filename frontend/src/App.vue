@@ -29,7 +29,7 @@ interface RestoreRevisionInfo {
     restoredBy: string;
 }
 
-const serviceUrl: string = 'YOUR_COLLABORATION_SERVER_URL';
+const serviceUrl: string = ' http://127.0.0.1:5000/';
 
 const userNames: string[] = [
     'James Carter', 'Olivia Bennett', 'William Parker', 'Emma Collins',
@@ -401,7 +401,7 @@ async function onCreated(): Promise<void> {
 
         const client = new CollaborationClient(spreadsheetAdapter, {
             serviceUrl,
-            connectionType: 'signalr',
+            connectionType: 'websocket',
             currentUser
         });
 
