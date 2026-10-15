@@ -1,0 +1,142 @@
+# ============================================================================
+# Production-Ready Dockerfile - Spreadsheet Collaborative Editing App
+# ============================================================================
+# Multi-stage build optimized for Azure App Service deployment
+#
+# Features:
+# - Vue 3 frontend (TypeScript, Vite)
+# - Python Flask backend with Gunicorn
+# - .NET 10 wrapper for Spreadsheet (SFDT processing, PDF export)
+# - Redis-based collaboration
+# - Environment variable injection for secrets
+# - Healthcheck for container monitoring
+#
+# Build:
+#   docker build -t spreadsheet-app:1.0.0 -f Dockerfile.production .
+#
+# Environment Variables (injected at runtime):
+#   REDIS_HOST              - Redis hostname (required)
+#   REDIS_PORT              - Redis port (default 6380)
+#   REDIS_PASSWORD          - Redis password (required for production)
+#   REDIS_SSL               - Use SSL for Redis (default true)
+#   SYNCFUSION_LICENSE_KEY  - Syncfusion license (required)
+#   BACKEND_URL             - Frontend backend URL (optional, for frontend config)
+#   BASE_PATH               - Sub-path routing (optional, default '')
+# ============================================================================
+
+# ---- Stage 1: Build Vue Frontend ----
+FROM node:20-alpine AS frontend
+
+ARG VITE_APP_BASE_PATH=''
+
+WORKDIR /fe
+COPY frontend/package*.json ./
+RUN npm ci --omit=dev
+
+COPY frontend/ ./
+
+# Build Vue app with TypeScript type-checking and Vite optimization
+RUN npm run build && \
+    # Verify dist was created
+    test -d dist || (echo "ERROR: dist directory not created" && exit 1)
+
+# ---- Stage 2: Build .NET Wrapper ----
+FROM mcr.microsoft.com/dotnet/sdk:10.0 AS dotnet
+
+WORKDIR /src
+COPY "NETStandardWrapperLibrary/WebServiceLibrary/" ./
+
+RUN dotnet publish WebServiceLibrary.csproj \
+    -c Release \
+    -o /out \
+    --no-self-contained \
+    && test -f /out/WebServiceLibrary.dll || (echo "ERROR: DLL not published" && exit 1)
+
+# ---- Stage 3: Production Runtime ----
+FROM mcr.microsoft.com/dotnet/aspnet:10.0
+
+# Metadata labels
+LABEL maintainer="Your Organization"
+LABEL description="Spreadsheet Collaborative Editing - Vue Frontend + Python Backend"
+LABEL version="1.0.0"
+
+# Install system dependencies
+# Packages include:
+# - python3, python3-pip, python3-venv: Python runtime
+# - libgdiplus, fontconfig, libfreetype6: Graphics libraries for PDF/rendering
+# - curl, wget: Utilities for healthchecks and debugging
+# - ca-certificates: SSL/TLS certificates
+RUN apt-get update && \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+        python3 \
+        python3-pip \
+        python3-venv \
+        libgdiplus \
+        fontconfig \
+        libfreetype6 \
+        libharfbuzz0b \
+        libfontconfig1 \
+        libssl3 \
+        ca-certificates \
+        curl \
+        && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Set Python environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONNET_RUNTIME=coreclr \
+    PYTHONDONTWRITEBYTECODE=1
+
+# Set .NET environment variables
+ENV DOTNET_ROOT=/usr/share/dotnet \
+    DOTNET_ROLL_FORWARD=LatestMajor
+
+# Configure LD_LIBRARY_PATH for native libraries (SkiaSharp, graphics libs)
+ENV LD_LIBRARY_PATH=/app/NETStandardWrapperLibrary/WebServiceLibrary/bin/Release/net10.0/publish/runtimes/linux-x64/native:/app/NETStandardWrapperLibrary/WebServiceLibrary/bin/Release/net10.0/publish:/usr/lib/x86_64-linux-gnu:/lib/x86_64-linux-gnu
+
+WORKDIR /app
+
+# Create Python virtual environment for isolation and reproducibility
+RUN python3 -m venv /opt/venv && \
+    /opt/venv/bin/pip install --upgrade pip setuptools wheel
+
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application files
+COPY app.py .
+COPY appsettings.json .
+COPY Files ./Files
+COPY license ./license
+
+# Copy built frontend
+COPY --from=frontend /fe/dist ./frontend/dist
+
+# Copy .NET wrapper binaries
+COPY --from=dotnet /out ./NETStandardWrapperLibrary/WebServiceLibrary/bin/Release/net10.0/publish/
+
+# Create startup script for configuration injection
+RUN mkdir -p /app/scripts
+COPY scripts/entrypoint.sh /app/scripts/
+RUN chmod +x /app/scripts/entrypoint.sh
+
+# Port configuration
+EXPOSE 5000
+
+# Health check: Monitor Flask readiness
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD curl -sf http://localhost:5000/api/DocumentEditor/Process || exit 1
+
+# Runtime command with configuration injection
+ENTRYPOINT ["/app/scripts/entrypoint.sh"]
+CMD ["gunicorn", \
+     "--bind", "0.0.0.0:5000", \
+     "--timeout", "600", \
+     "--workers", "1", \
+     "--threads", "4", \
+     "--worker-class", "gthread", \
+     "--access-logfile", "-", \
+     "--error-logfile", "-", \
+     "app:app"]

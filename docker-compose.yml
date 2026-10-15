@@ -1,0 +1,174 @@
+version: '3.8'
+
+# ============================================================================
+# Docker Compose - Local Development and Testing
+# ============================================================================
+# This compose file sets up a complete local environment for development:
+# - Redis: Session and collaboration store
+# - App: Flask backend + Vue frontend + .NET wrapper
+#
+# Usage:
+#   docker-compose up -d          # Start all services in background
+#   docker-compose logs -f app    # View application logs
+#   docker-compose down           # Stop and remove containers
+#   docker-compose down -v        # Stop and remove volumes
+#
+# Access:
+#   Frontend: http://localhost:5000
+#   API: http://localhost:5000/api/DocumentEditor/Process
+#   Redis: localhost:6379
+# ============================================================================
+
+services:
+  # ---- Redis Cache ----
+  # In-memory data store for collaboration sessions and version history
+  redis:
+    image: redis:7-alpine
+    container_name: spreadsheet-redis
+    
+    ports:
+      - "6379:6379"
+    
+    command: redis-server --appendonly yes
+    
+    volumes:
+      - redis-data:/data
+    
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    
+    networks:
+      - spreadsheet-network
+    
+    restart: unless-stopped
+    
+    # Resource limits (optional)
+    # mem_limit: 512m
+    # cpus: '0.5'
+
+  # ---- Flask Application ----
+  # Serves Vue frontend and provides collaborative editing API
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_APP_BASE_PATH: ''  # Can be customized for sub-path deployments
+    
+    container_name: spreadsheet-app
+    
+    ports:
+      - "5000:5000"
+    
+    # Environment variables (development defaults)
+    environment:
+      # Redis configuration
+      REDIS_HOST: redis                  # Use service name for DNS resolution
+      REDIS_PORT: "6379"
+      REDIS_PASSWORD: ""                 # No password in local development
+      REDIS_SSL: "false"
+      
+      # Runtime environment
+      PYTHONUNBUFFERED: "1"
+      PYTHONNET_RUNTIME: coreclr
+      DOTNET_ROOT: /usr/share/dotnet
+      DOTNET_ROLL_FORWARD: LatestMajor
+      
+      # Application configuration
+      BASE_PATH: ""                      # No sub-path for local dev
+      BACKEND_URL: "http://localhost:5000/"
+      
+      # Gunicorn tuning (adjust for your system)
+      GUNICORN_WORKERS: "1"
+    
+    depends_on:
+      redis:
+        condition: service_healthy
+    
+    # Mount volumes for development
+    volumes:
+      # Application data
+      - ./Files:/app/Files:rw
+      
+      # Optional: Hot-reload for frontend in development
+      # (Uncomment if you're actively developing)
+      # - ./frontend/src:/app/frontend/src:ro
+    
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/api/DocumentEditor/Process"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    
+    networks:
+      - spreadsheet-network
+    
+    restart: unless-stopped
+    
+    # Resource limits (optional, adjust based on your system)
+    # mem_limit: 2g
+    # cpus: '2'
+    
+    # Logging configuration (optional)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "3"
+
+# ============================================================================
+# Network Configuration
+# ============================================================================
+# All services communicate through this internal Docker network
+networks:
+  spreadsheet-network:
+    driver: bridge
+
+# ============================================================================
+# Volume Configuration
+# ============================================================================
+# Persistent storage for Redis data
+volumes:
+  redis-data:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: "size=256m,noatime"
+
+# ============================================================================
+# Quick Reference
+# ============================================================================
+#
+# Start services:
+#   docker-compose up -d
+#
+# View logs (all services):
+#   docker-compose logs -f
+#
+# View logs (single service):
+#   docker-compose logs -f app
+#   docker-compose logs -f redis
+#
+# Execute command in container:
+#   docker-compose exec app bash
+#   docker-compose exec redis redis-cli
+#
+# Rebuild image:
+#   docker-compose build --no-cache
+#
+# Stop services:
+#   docker-compose stop
+#
+# Remove containers and volumes:
+#   docker-compose down -v
+#
+# Health status:
+#   docker ps --format "table {{.Names}}\t{{.Status}}"
+#
+# ============================================================================

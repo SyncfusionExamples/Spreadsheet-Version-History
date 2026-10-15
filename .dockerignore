@@ -1,4 +1,88 @@
+# ============================================================================
+# Docker Build Context Exclusions
+# ============================================================================
+# This file specifies which files and directories to exclude from the Docker
+# build context, reducing build time and image size.
+#
+# Reference: https://docs.docker.com/build/building/context/#dockerignore-file
+# ============================================================================
+
+# ---- Git and Version Control ----
+.git
+.gitignore
+.gitattributes
+.github
+.gitlab-ci.yml
+.circleci
+
+# ---- Development and IDE ----
+.vscode
+.idea
+*.swp
+*.swo
+*~
+.DS_Store
+.env
+.env.local
+.env.development
+.env.production
+
+# ---- Node / Frontend ----
 frontend/node_modules
 frontend/dist
+frontend/.next
+frontend/out
+frontend/coverage
+frontend/.cache
+
+# ---- Python / Backend ----
+**/__pycache__
+**/*.pyc
+**/*.pyo
+**/*.egg-info
+.pytest_cache
+.coverage
+*.egg
+dist
+build
+.venv
+venv
+ENV
+
+# ---- .NET / Backend ----
 **/obj
-.git
+**/bin
+*.dll
+*.exe
+*.csproj.user
+.vs
+.vscode
+
+# ---- Build Artifacts ----
+dist
+build
+*.log
+*.tar.gz
+*.zip
+
+# ---- Documentation and Config ----
+docs
+README.md
+DOCKER_DEPLOYMENT_GUIDE.md
+docker-compose.yml
+docker-compose.*.yml
+Dockerfile.dev
+Dockerfile.test
+*.md
+
+# ---- CI/CD ----
+.travis.yml
+Jenkinsfile
+azure-pipelines.yml
+
+# ---- Other ----
+*.tmp
+*.temp
+.terraform
+terraform.tfstate*
+scripts/deploy*.sh
